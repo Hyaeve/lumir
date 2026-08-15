@@ -80,7 +80,7 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(30.dp)
-            setBackgroundColor(background)
+            setBackgroundColor(this@MainActivity.background)
         }
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
