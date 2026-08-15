@@ -9,6 +9,11 @@ local.properties
 *.apk
 *.aab
 
+# Release signing material
+*.jks
+*.keystore
+release-keystore.b64
+
 # OS
 .DS_Store
 Thumbs.db

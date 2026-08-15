@@ -11,6 +11,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      LUMIR_KEYSTORE_BASE64: ${{ secrets.LUMIR_KEYSTORE_BASE64 }}
+      LUMIR_KEYSTORE_PASSWORD: ${{ secrets.LUMIR_KEYSTORE_PASSWORD }}
+      LUMIR_KEY_ALIAS: ${{ secrets.LUMIR_KEY_ALIAS }}
+      LUMIR_KEY_PASSWORD: ${{ secrets.LUMIR_KEY_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -37,9 +42,27 @@ jobs:
         run: gradle --no-daemon --stacktrace --info assembleDebug
 
       - name: Upload debug APK
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: lumir-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Prepare release keystore
+        if: ${{ env.LUMIR_KEYSTORE_BASE64 != '' && env.LUMIR_KEYSTORE_PASSWORD != '' && env.LUMIR_KEY_ALIAS != '' && env.LUMIR_KEY_PASSWORD != '' }}
+        shell: bash
+        run: echo "$LUMIR_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/lumir-release.jks"
+
+      - name: Build signed release APK
+        if: ${{ env.LUMIR_KEYSTORE_BASE64 != '' && env.LUMIR_KEYSTORE_PASSWORD != '' && env.LUMIR_KEY_ALIAS != '' && env.LUMIR_KEY_PASSWORD != '' }}
+        env:
+          LUMIR_KEYSTORE_FILE: ${{ runner.temp }}/lumir-release.jks
+        run: gradle --no-daemon --stacktrace --info assembleRelease
+
+      - name: Upload signed release APK
+        if: ${{ env.LUMIR_KEYSTORE_BASE64 != '' && env.LUMIR_KEYSTORE_PASSWORD != '' && env.LUMIR_KEY_ALIAS != '' && env.LUMIR_KEY_PASSWORD != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumir-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
