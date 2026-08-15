@@ -141,7 +141,7 @@ class MainActivity : AppCompatActivity() {
         textSize = 15f
         setTextColor(ink)
         setHintTextColor(muted)
-        singleLine = true
+        maxLines = 1
         setPadding(14.dp, 0, 14.dp, 0)
         background = rounded(0xFFFBFCFA.toInt(), 0xFFDCE4DC.toInt(), 8f)
         if (password) inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
