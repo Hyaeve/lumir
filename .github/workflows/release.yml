@@ -1,0 +1,102 @@
+name: 发布 Lumir 正式版本
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的版本标签，例如 v1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 构建并发布正式 APK
+    runs-on: ubuntu-latest
+    env:
+      LUMIR_KEYSTORE_BASE64: ${{ secrets.LUMIR_KEYSTORE_BASE64 }}
+      LUMIR_KEYSTORE_PASSWORD: ${{ secrets.LUMIR_KEYSTORE_PASSWORD }}
+      LUMIR_KEY_ALIAS: ${{ secrets.LUMIR_KEY_ALIAS }}
+      LUMIR_KEY_PASSWORD: ${{ secrets.LUMIR_KEY_PASSWORD }}
+
+    steps:
+      - name: 检查签名配置
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in LUMIR_KEYSTORE_BASE64 LUMIR_KEYSTORE_PASSWORD LUMIR_KEY_ALIAS LUMIR_KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "缺少 GitHub Actions Secret: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "请在仓库 Settings > Secrets and variables > Actions 中配置全部签名 Secrets。"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 设置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 设置 Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: 设置 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 Android SDK 包
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: 写入临时签名密钥
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$LUMIR_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/lumir-release.jks"
+          chmod 600 "$RUNNER_TEMP/lumir-release.jks"
+
+      - name: 构建正式签名 APK
+        env:
+          LUMIR_KEYSTORE_FILE: ${{ runner.temp }}/lumir-release.jks
+        run: gradle --no-daemon --stacktrace assembleRelease
+
+      - name: 确定发布标签
+        id: release_tag
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 创建 GitHub Release 并上传 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            app/build/outputs/apk/release/app-release.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Lumir $RELEASE_TAG" \
+            --generate-notes
+
+      - name: 清理临时签名密钥
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/lumir-release.jks"
