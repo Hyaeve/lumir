@@ -225,7 +225,7 @@ class MainActivity : AppCompatActivity() {
     private fun rounded(fill: Int, stroke: Int, radius: Float) = GradientDrawable().apply {
         setColor(fill)
         if (stroke != Color.TRANSPARENT) setStroke(1.dp, stroke)
-        cornerRadius = radius.dp
+        cornerRadius = radius * resources.displayMetrics.density
     }
 
     private fun marginParams(width: Int, height: Int, left: Int, top: Int, right: Int) = LinearLayout.LayoutParams(width, height.dp).apply {
