@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.Lumir" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/lumir_green</item>
+        <item name="android:navigationBarColor">@color/lumir_background</item>
+        <item name="android:statusBarColor">@color/lumir_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>

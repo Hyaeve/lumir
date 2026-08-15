@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">Lumir</string>
+    <color name="lumir_green">#719B7F</color>
+    <color name="lumir_ink">#34433F</color>
+    <color name="lumir_background">#F5F7F2</color>
+</resources>
