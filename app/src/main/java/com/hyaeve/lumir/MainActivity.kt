@@ -3,8 +3,11 @@ package com.hyaeve.lumir
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -18,18 +21,31 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.nio.charset.StandardCharsets
+import java.security.KeyStore
 import java.util.concurrent.Executors
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+import android.util.Base64
 
 class MainActivity : AppCompatActivity() {
+    private companion object {
+        const val TAG = "LumirAuth"
+    }
+
     private val executor = Executors.newSingleThreadExecutor()
     private val preferences by lazy { getSharedPreferences("lumir", Context.MODE_PRIVATE) }
+
+    private val credentialKeyAlias = "lumir.credentials"
+    private val savedPasswordKey = "password.encrypted"
     private var webView: WebView? = null
     private var serverInput: EditText? = null
     private var usernameInput: EditText? = null
@@ -70,7 +86,7 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(name, LinearLayout.LayoutParams(-1, 48.dp))
         setContentView(root)
-        root.postDelayed({ showLogin() }, 850)
+        root.postDelayed({ tryAutoLogin() }, 850)
     }
 
     private fun showLogin(message: String? = null) {
@@ -109,7 +125,7 @@ class MainActivity : AppCompatActivity() {
 
         serverInput = input("服务器地址", preferences.getString("server", "http://127.0.0.1:15500")!!, false)
         usernameInput = input("账号", preferences.getString("username", "") ?: "", false)
-        passwordInput = input("密码", "", true)
+        passwordInput = input("密码", decryptPassword().orEmpty(), true)
         panel.addView(serverInput, fieldParams())
         panel.addView(usernameInput, fieldParams())
         panel.addView(passwordInput, fieldParams())
@@ -161,23 +177,12 @@ class MainActivity : AppCompatActivity() {
         error.text = ""
         executor.execute {
             try {
-                val connection = (URL("$server/api/login").openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    connectTimeout = 10000
-                    readTimeout = 15000
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json")
-                }
-                connection.outputStream.use { it.write(JSONObject().put("username", username).put("password", password).toString().toByteArray()) }
-                val response = connection.responseCode
-                val cookies = connection.headerFields["Set-Cookie"].orEmpty()
-                if (response !in 200..299 || cookies.isEmpty()) throw IllegalStateException("账号或密码不正确，或服务器无法连接")
-                val cookieManager = CookieManager.getInstance()
-                cookies.forEach { cookieManager.setCookie(server, it.substringBefore(';')) }
-                cookieManager.flush()
-                preferences.edit().putString("server", server).putString("username", username).apply()
+                authenticate(server, username, password)
+                saveCredentials(server, username, password)
+                Log.i(TAG, "Interactive login succeeded; encrypted credentials saved")
                 runOnUiThread { showWebApp(server) }
             } catch (exception: Exception) {
+                Log.w(TAG, "Interactive login failed: ${exception.javaClass.simpleName}: ${exception.message}")
                 runOnUiThread {
                     error.text = exception.message ?: "连接失败，请检查服务器地址"
                     loginButton?.isEnabled = true
@@ -187,9 +192,121 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun tryAutoLogin() {
+        val server = normalizeServer(preferences.getString("server", "").orEmpty())
+        val username = preferences.getString("username", "").orEmpty()
+        val password = decryptPassword()
+        if (server == null || username.isBlank() || password.isNullOrBlank()) {
+            Log.i(TAG, "Auto-login skipped: encrypted credentials are incomplete")
+            showLogin()
+            return
+        }
+
+        Log.i(TAG, "Auto-login started for saved server and username")
+        executor.execute {
+            try {
+                authenticate(server, username, password)
+                Log.i(TAG, "Auto-login succeeded")
+                runOnUiThread { showWebApp(server) }
+            } catch (exception: Exception) {
+                Log.w(TAG, "Auto-login failed: ${exception.javaClass.simpleName}: ${exception.message}")
+                runOnUiThread {
+                    showLogin("自动登录失败，请检查服务器连接或重新登录")
+                }
+            }
+        }
+    }
+
+    private fun authenticate(server: String, username: String, password: String) {
+        val connection = (URL("$server/api/login").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 10000
+            readTimeout = 15000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+        }
+        try {
+            connection.outputStream.use {
+                it.write(
+                    JSONObject().put("username", username).put("password", password)
+                        .toString().toByteArray(StandardCharsets.UTF_8)
+                )
+            }
+            val response = connection.responseCode
+            val cookies = connection.headerFields["Set-Cookie"].orEmpty()
+            Log.i(TAG, "Authentication response: status=$response, setCookie=${cookies.isNotEmpty()}")
+            if (response !in 200..299 || cookies.isEmpty()) {
+                throw IllegalStateException("账号或密码不正确，或服务器无法连接")
+            }
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            cookies.forEach { cookieManager.setCookie(server, it.substringBefore(';')) }
+            cookieManager.flush()
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun saveCredentials(server: String, username: String, password: String) {
+        preferences.edit()
+            .putString("server", server)
+            .putString("username", username)
+            .putString(savedPasswordKey, encryptPassword(password))
+            .apply()
+    }
+
+    private fun encryptPassword(password: String): String {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, credentialKey())
+        val iv = cipher.iv
+        val encrypted = cipher.doFinal(password.toByteArray(StandardCharsets.UTF_8))
+        return "${Base64.encodeToString(iv, Base64.NO_WRAP)}:${Base64.encodeToString(encrypted, Base64.NO_WRAP)}"
+    }
+
+    private fun decryptPassword(): String? {
+        val stored = preferences.getString(savedPasswordKey, null) ?: return null
+        return try {
+            val parts = stored.split(":", limit = 2)
+            if (parts.size != 2) return null
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                credentialKey(),
+                GCMParameterSpec(128, Base64.decode(parts[0], Base64.DEFAULT))
+            )
+            String(cipher.doFinal(Base64.decode(parts[1], Base64.DEFAULT)), StandardCharsets.UTF_8)
+        } catch (exception: Exception) {
+            Log.w(TAG, "Unable to decrypt saved password; credentials will be requested again")
+            preferences.edit().remove(savedPasswordKey).apply()
+            null
+        }
+    }
+
+    private fun credentialKey(): SecretKey {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val existing = keyStore.getKey(credentialKeyAlias, null) as? SecretKey
+        if (existing != null) return existing
+
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        generator.init(
+            KeyGenParameterSpec.Builder(
+                credentialKeyAlias,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build()
+        )
+        return generator.generateKey()
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun showWebApp(server: String) {
         val view = WebView(this).apply {
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            cookieManager.flush()
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
