@@ -1,10 +1,17 @@
 package com.hyaeve.lumir
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.text.method.HideReturnsTransformationMethod
@@ -15,6 +22,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.URLUtil
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -26,7 +34,10 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.core.view.setPadding
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import org.json.JSONObject
@@ -45,7 +56,15 @@ import android.util.Base64
 class MainActivity : AppCompatActivity() {
     private companion object {
         const val TAG = "LumirAuth"
+        const val STORAGE_PERMISSION_REQUEST = 1001
     }
+
+    private data class PendingDownload(
+        val url: String,
+        val fileName: String,
+        val mimeType: String?,
+        val userAgent: String?
+    )
 
     private val executor = Executors.newSingleThreadExecutor()
     private val preferences by lazy { getSharedPreferences("lumir", Context.MODE_PRIVATE) }
@@ -61,6 +80,7 @@ class MainActivity : AppCompatActivity() {
     private var loginButton: Button? = null
     private var loading: ProgressBar? = null
     private var leavingWebApp = false
+    private var pendingDownload: PendingDownload? = null
 
     private val green = Color.rgb(113, 155, 127)
     private val ink = Color.rgb(52, 67, 63)
@@ -373,10 +393,27 @@ class MainActivity : AppCompatActivity() {
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
             settings.mediaPlaybackRequiresUserGesture = false
-            addJavascriptInterface(SessionBridge(), "Lumir")
+            addJavascriptInterface(SessionBridge(server), "Lumir")
+            setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                if (url.startsWith("blob:")) {
+                    Toast.makeText(this@MainActivity, "正在准备图片，请稍候重试", Toast.LENGTH_SHORT).show()
+                    return@setDownloadListener
+                }
+                requestDownload(
+                    PendingDownload(
+                        url = url,
+                        fileName = URLUtil.guessFileName(url, contentDisposition, mimeType),
+                        mimeType = mimeType,
+                        userAgent = userAgent
+                    )
+                )
+            }
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    return !isTrustedServerUrl(request.url.toString(), server)
+                    val url = request.url.toString()
+                    if (isTrustedServerUrl(url, server)) return false
+                    openExternalUrl(url)
+                    return true
                 }
 
                 override fun onPageFinished(view: WebView, url: String) {
@@ -427,16 +464,120 @@ class MainActivity : AppCompatActivity() {
                 } catch (_) {}
                 return response;
               };
+              const originalOpen = window.open.bind(window);
+              window.open = (url, target, features) => {
+                try {
+                  const external = new URL(String(url || ''), location.href);
+                  if (external.origin !== location.origin && /^https?:$/.test(external.protocol)) {
+                    window.Lumir.copyLink(external.href);
+                    return null;
+                  }
+                } catch (_) {}
+                return originalOpen(url, target, features);
+              };
             })();
             """.trimIndent(),
             null
         )
     }
 
-    private inner class SessionBridge {
+    private inner class SessionBridge(private val server: String) {
         @JavascriptInterface
         fun onSignedOut() {
             runOnUiThread { leaveWebApp() }
+        }
+
+        @JavascriptInterface
+        fun saveFile(url: String, fileName: String) {
+            if (!isTrustedServerUrl(url, server)) return
+            runOnUiThread {
+                requestDownload(
+                    PendingDownload(
+                        url = url,
+                        fileName = safeFileName(fileName),
+                        mimeType = java.net.URLConnection.guessContentTypeFromName(fileName),
+                        userAgent = webView?.settings?.userAgentString
+                    )
+                )
+            }
+        }
+
+        @JavascriptInterface
+        fun copyLink(url: String) {
+            runOnUiThread { copyLinkToClipboard(url) }
+        }
+    }
+
+    private fun requestDownload(download: PendingDownload) {
+        if (
+            Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingDownload = download
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                STORAGE_PERMISSION_REQUEST
+            )
+            return
+        }
+        enqueueDownload(download)
+    }
+
+    private fun enqueueDownload(download: PendingDownload) {
+        try {
+            val request = DownloadManager.Request(Uri.parse(download.url)).apply {
+                setTitle(download.fileName)
+                setDescription("正在保存 Lumic 文件")
+                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, download.fileName)
+                download.mimeType?.takeIf { it.isNotBlank() }?.let(::setMimeType)
+                download.userAgent?.takeIf { it.isNotBlank() }?.let { addRequestHeader("User-Agent", it) }
+                CookieManager.getInstance().getCookie(download.url)?.takeIf { it.isNotBlank() }?.let {
+                    addRequestHeader("Cookie", it)
+                }
+            }
+            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            manager.enqueue(request)
+            Toast.makeText(this, "已加入下载任务：${download.fileName}", Toast.LENGTH_LONG).show()
+        } catch (exception: Exception) {
+            Log.w(TAG, "Unable to enqueue download: ${exception.message}")
+            Toast.makeText(this, "保存失败，请检查下载服务", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun safeFileName(value: String): String {
+        val cleaned = value.substringAfterLast('/').replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+        return cleaned.takeIf { it.isNotBlank() }?.take(180) ?: "Lumic-${System.currentTimeMillis()}.jpg"
+    }
+
+    private fun openExternalUrl(url: String) {
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
+        if (uri.scheme != "http" && uri.scheme != "https") return
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+        } catch (_: Exception) {
+            Toast.makeText(this, "未找到可打开链接的浏览器", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun copyLinkToClipboard(url: String) {
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
+        if (uri.scheme != "http" && uri.scheme != "https") return
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("原动态链接", url))
+        Toast.makeText(this, "已复制原动态链接", Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != STORAGE_PERMISSION_REQUEST) return
+        val download = pendingDownload
+        pendingDownload = null
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && download != null) {
+            enqueueDownload(download)
+        } else {
+            Toast.makeText(this, "需要存储权限才能保存到下载目录", Toast.LENGTH_SHORT).show()
         }
     }
 
