@@ -3,26 +3,32 @@ package com.hyaeve.lumir
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.text.method.HideReturnsTransformationMethod
+import android.text.method.PasswordTransformationMethod
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URI
@@ -46,12 +52,15 @@ class MainActivity : AppCompatActivity() {
 
     private val credentialKeyAlias = "lumir.credentials"
     private val savedPasswordKey = "password.encrypted"
+    private val rememberPasswordKey = "password.remember"
     private var webView: WebView? = null
     private var serverInput: EditText? = null
     private var usernameInput: EditText? = null
     private var passwordInput: EditText? = null
+    private var rememberPasswordInput: CheckBox? = null
     private var loginButton: Button? = null
     private var loading: ProgressBar? = null
+    private var leavingWebApp = false
 
     private val green = Color.rgb(113, 155, 127)
     private val ink = Color.rgb(52, 67, 63)
@@ -90,8 +99,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showLogin(message: String? = null) {
-        webView?.destroy()
+        webView?.apply {
+            stopLoading()
+            removeJavascriptInterface("Lumir")
+            destroy()
+        }
         webView = null
+        leavingWebApp = false
+        val savedPassword = decryptPassword().orEmpty()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -125,10 +140,22 @@ class MainActivity : AppCompatActivity() {
 
         serverInput = input("服务器地址", preferences.getString("server", "http://127.0.0.1:15500")!!, false)
         usernameInput = input("账号", preferences.getString("username", "") ?: "", false)
-        passwordInput = input("密码", decryptPassword().orEmpty(), true)
+        passwordInput = input("密码", savedPassword, true)
         panel.addView(serverInput, fieldParams())
         panel.addView(usernameInput, fieldParams())
-        panel.addView(passwordInput, fieldParams())
+        panel.addView(passwordRow(), fieldParams())
+
+        rememberPasswordInput = CheckBox(this).apply {
+            text = "记住密码"
+            textSize = 14f
+            setTextColor(ink)
+            buttonTintList = android.content.res.ColorStateList.valueOf(green)
+            isChecked = preferences.getBoolean(rememberPasswordKey, savedPassword.isNotEmpty())
+            setOnCheckedChangeListener { _, checked ->
+                if (!checked) preferences.edit().remove(savedPasswordKey).apply()
+            }
+        }
+        panel.addView(rememberPasswordInput, marginParams(-1, 36, 0, 0, 0))
 
         val error = TextView(this).apply {
             text = message ?: ""
@@ -160,7 +187,37 @@ class MainActivity : AppCompatActivity() {
         maxLines = 1
         setPadding(14.dp, 0, 14.dp, 0)
         background = rounded(0xFFFBFCFA.toInt(), 0xFFDCE4DC.toInt(), 8f)
-        if (password) inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        if (password) {
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            transformationMethod = PasswordTransformationMethod.getInstance()
+        }
+    }
+
+    private fun passwordRow() = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        background = rounded(0xFFFBFCFA.toInt(), 0xFFDCE4DC.toInt(), 8f)
+        val field = requireNotNull(passwordInput)
+        field.background = null
+        addView(field, LinearLayout.LayoutParams(0, -1, 1f))
+        addView(ImageButton(this@MainActivity).apply {
+            setImageResource(android.R.drawable.ic_menu_view)
+            contentDescription = "显示密码"
+            setColorFilter(muted)
+            setBackgroundColor(Color.TRANSPARENT)
+            setPadding(12.dp)
+            setOnClickListener {
+                val field = passwordInput ?: return@setOnClickListener
+                val hidden = field.transformationMethod is PasswordTransformationMethod
+                field.transformationMethod = if (hidden) {
+                    HideReturnsTransformationMethod.getInstance()
+                } else {
+                    PasswordTransformationMethod.getInstance()
+                }
+                contentDescription = if (hidden) "隐藏密码" else "显示密码"
+                setColorFilter(if (hidden) green else muted)
+                field.setSelection(field.text.length)
+            }
+        }, LinearLayout.LayoutParams(50.dp, -1))
     }
 
     private fun fieldParams() = LinearLayout.LayoutParams(-1, 50.dp).apply { bottomMargin = 12.dp }
@@ -175,11 +232,12 @@ class MainActivity : AppCompatActivity() {
         loginButton?.isEnabled = false
         loading?.visibility = View.VISIBLE
         error.text = ""
+        val rememberPassword = rememberPasswordInput?.isChecked == true
         executor.execute {
             try {
                 authenticate(server, username, password)
-                saveCredentials(server, username, password)
-                Log.i(TAG, "Interactive login succeeded; encrypted credentials saved")
+                saveCredentials(server, username, password, rememberPassword)
+                Log.i(TAG, "Interactive login succeeded; rememberPassword=$rememberPassword")
                 runOnUiThread { showWebApp(server) }
             } catch (exception: Exception) {
                 Log.w(TAG, "Interactive login failed: ${exception.javaClass.simpleName}: ${exception.message}")
@@ -247,12 +305,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun saveCredentials(server: String, username: String, password: String) {
-        preferences.edit()
-            .putString("server", server)
-            .putString("username", username)
-            .putString(savedPasswordKey, encryptPassword(password))
-            .apply()
+    private fun saveCredentials(server: String, username: String, password: String, rememberPassword: Boolean) {
+        preferences.edit().apply {
+            putString("server", server)
+            putString("username", username)
+            putBoolean(rememberPasswordKey, rememberPassword)
+            if (rememberPassword) putString(savedPasswordKey, encryptPassword(password))
+            else remove(savedPasswordKey)
+        }.apply()
     }
 
     private fun encryptPassword(password: String): String {
@@ -301,8 +361,10 @@ class MainActivity : AppCompatActivity() {
         return generator.generateKey()
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
     private fun showWebApp(server: String) {
+        leavingWebApp = false
+        lateinit var refreshLayout: SwipeRefreshLayout
         val view = WebView(this).apply {
             val cookieManager = CookieManager.getInstance()
             cookieManager.setAcceptCookie(true)
@@ -311,15 +373,80 @@ class MainActivity : AppCompatActivity() {
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
             settings.mediaPlaybackRequiresUserGesture = false
+            addJavascriptInterface(SessionBridge(), "Lumir")
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    return !request.url.toString().startsWith(server)
+                    return !isTrustedServerUrl(request.url.toString(), server)
+                }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    super.onPageFinished(view, url)
+                    refreshLayout.isRefreshing = false
+                    if (isTrustedServerUrl(url, server)) installSessionObserver(view)
                 }
             }
-            loadUrl(server)
+        }
+        refreshLayout = object : SwipeRefreshLayout(this) {
+            override fun canChildScrollUp(): Boolean = view.canScrollVertically(-1)
+        }.apply {
+            setColorSchemeColors(green)
+            setProgressBackgroundColorSchemeColor(Color.WHITE)
+            setOnRefreshListener { view.reload() }
+            addView(view, ViewGroup.LayoutParams(-1, -1))
         }
         webView = view
-        setContentView(view)
+        setContentView(refreshLayout)
+        view.loadUrl(server)
+    }
+
+    private fun isTrustedServerUrl(url: String, server: String): Boolean = try {
+        val candidate = URI(url)
+        val trusted = URI(server)
+        candidate.scheme == trusted.scheme && candidate.rawAuthority == trusted.rawAuthority
+    } catch (_: Exception) {
+        false
+    }
+
+    private fun installSessionObserver(view: WebView) {
+        view.evaluateJavascript(
+            """
+            (() => {
+              if (window.__lumirSessionObserver) return;
+              window.__lumirSessionObserver = true;
+              const originalFetch = window.fetch.bind(window);
+              window.fetch = async (...args) => {
+                const response = await originalFetch(...args);
+                try {
+                  const url = new URL(typeof args[0] === 'string' ? args[0] : args[0].url, location.href);
+                  if (url.origin === location.origin && url.pathname === '/api/logout' && response.ok) {
+                    window.Lumir.onSignedOut();
+                  } else if (url.origin === location.origin && url.pathname === '/api/session' && response.ok) {
+                    const session = await response.clone().json();
+                    if (!session.authenticated) window.Lumir.onSignedOut();
+                  }
+                } catch (_) {}
+                return response;
+              };
+            })();
+            """.trimIndent(),
+            null
+        )
+    }
+
+    private inner class SessionBridge {
+        @JavascriptInterface
+        fun onSignedOut() {
+            runOnUiThread { leaveWebApp() }
+        }
+    }
+
+    private fun leaveWebApp() {
+        if (leavingWebApp) return
+        leavingWebApp = true
+        CookieManager.getInstance().removeAllCookies {
+            CookieManager.getInstance().flush()
+            runOnUiThread { showLogin("已退出登录") }
+        }
     }
 
     private fun normalizeServer(value: String): String? = try {
@@ -335,6 +462,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         executor.shutdownNow()
+        webView?.removeJavascriptInterface("Lumir")
         webView?.destroy()
         super.onDestroy()
     }

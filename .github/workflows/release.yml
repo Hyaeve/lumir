@@ -73,6 +73,21 @@ jobs:
           LUMIR_KEYSTORE_FILE: ${{ runner.temp }}/lumir-release.jks
         run: gradle --no-daemon --stacktrace assembleRelease
 
+      - name: 按版本命名 64 位 APK
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' app/build.gradle.kts | head -n 1)
+          mapfile -t apks < <(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*arm64-v8a*release.apk')
+          test -n "$version"
+          test "${#apks[@]}" -eq 1
+          apk="${apks[0]}"
+          output="Lumir.v${version}.apk"
+          cp "$apk" "$output"
+          echo "path=$output" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: 确定发布标签
         id: release_tag
         shell: bash
@@ -87,11 +102,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+          APK_PATH: ${{ steps.apk.outputs.path }}
         shell: bash
         run: |
           set -euo pipefail
           gh release create "$RELEASE_TAG" \
-            app/build/outputs/apk/release/app-release.apk \
+            "$APK_PATH" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Lumir $RELEASE_TAG" \
             --generate-notes
