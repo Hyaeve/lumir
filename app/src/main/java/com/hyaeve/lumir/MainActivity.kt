@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
@@ -151,28 +153,16 @@ class MainActivity : AppCompatActivity() {
         }
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(26.dp)
-            background = rounded(Color.WHITE, 0xFFE1E8E1.toInt(), 18f)
+            setPadding(20.dp)
+            background = rounded(Color.WHITE, 0xFFE1E8E1.toInt(), 16f)
             elevation = 8.dp.toFloat()
         }
         val icon = ImageView(this).apply {
             setImageResource(R.drawable.lumic)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
         }
-        panel.addView(icon, LinearLayout.LayoutParams(-1, 128.dp))
-        val title = TextView(this).apply {
-            text = "连接 Lumic"
-            textSize = 26f
-            setTextColor(ink)
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }
-        panel.addView(title, marginParams(-1, 42, 0, 8, 0))
-        val subtitle = TextView(this).apply {
-            text = "登录你的自托管拾光服务"
-            textSize = 14f
-            setTextColor(muted)
-        }
-        panel.addView(subtitle, marginParams(-1, 28, 0, 24, 0))
+        panel.addView(icon, LinearLayout.LayoutParams(-1, 88.dp))
+        panel.addView(brandTitle(), marginParams(-1, 42, 0, 4, 0))
 
         serverInput = input("服务器地址", preferences.getString("server", "http://127.0.0.1:15500")!!, false)
         usernameInput = input("账号", preferences.getString("username", "") ?: "", false)
@@ -191,14 +181,14 @@ class MainActivity : AppCompatActivity() {
                 if (!checked) preferences.edit().remove(savedPasswordKey).apply()
             }
         }
-        panel.addView(rememberPasswordInput, marginParams(-1, 36, 0, 0, 0))
+        panel.addView(rememberPasswordInput, marginParams(-1, 32, 0, 0, 0))
 
         val error = TextView(this).apply {
             text = message ?: ""
             textSize = 12f
             setTextColor(Color.rgb(183, 95, 88))
         }
-        panel.addView(error, marginParams(-1, 20, 0, 12, 0))
+        panel.addView(error, marginParams(-1, 18, 0, 8, 0))
         loginButton = Button(this).apply {
             text = "登录 Lumir"
             setTextColor(Color.WHITE)
@@ -218,20 +208,66 @@ class MainActivity : AppCompatActivity() {
         )
         root.addView(
             TextView(this).apply {
-                text = "关于"
-                textSize = 14f
+                text = "关于 Lumir · 版本与更新"
+                textSize = 13f
                 gravity = Gravity.CENTER
-                setTextColor(muted)
-                setPadding(20.dp, 12.dp, 20.dp, 12.dp)
+                setTextColor(green)
+                setPadding(24.dp, 12.dp, 24.dp, 12.dp)
+                background = rounded(0xFFF0F5F0.toInt(), 0xFFDCE9DD.toInt(), 16f)
                 isClickable = true
                 isFocusable = true
                 setOnClickListener { showAboutDialog() }
             },
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 48.dp).apply {
                 gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = 8.dp
             }
         )
         setContentView(root)
+    }
+
+    private fun brandTitle(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        addView(TextView(this@MainActivity).apply {
+            text = "Lumic ·"
+            textSize = 25f
+            setTextColor(ink)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, -1))
+        addView(TextView(this@MainActivity).apply {
+            text = "拾"
+            textSize = 20f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF527B96.toInt())
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(8.dp, 0, 7.dp, 0)
+            background = rounded(0xFFE9F4FF.toInt(), 0xFFD2E6FA.toInt(), 10f)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 30.dp).apply {
+            leftMargin = 8.dp
+        })
+        addView(TextView(this@MainActivity).apply {
+            text = "光"
+            textSize = 20f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(7.dp, 0, 8.dp, 0)
+            background = rounded(0xFFF5F0FF.toInt(), 0xFFE5DDF7.toInt(), 10f)
+            post {
+                paint.shader = LinearGradient(
+                    0f,
+                    0f,
+                    width.toFloat(),
+                    0f,
+                    intArrayOf(0xFF8DC8F7.toInt(), 0xFFB69AEA.toInt(), 0xFFF2C96D.toInt()),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+                invalidate()
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 30.dp).apply {
+            leftMargin = 2.dp
+        })
     }
 
     private fun showAboutDialog() {
@@ -411,7 +447,7 @@ class MainActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(50.dp, -1))
     }
 
-    private fun fieldParams() = LinearLayout.LayoutParams(-1, 50.dp).apply { bottomMargin = 12.dp }
+    private fun fieldParams() = LinearLayout.LayoutParams(-1, 46.dp).apply { bottomMargin = 10.dp }
 
     private fun login(error: TextView) {
         val rawServer = serverInput?.text?.toString()?.trim().orEmpty().trimEnd('/')
