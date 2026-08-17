@@ -41,7 +41,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.setPadding
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URI
@@ -69,75 +68,6 @@ class MainActivity : AppCompatActivity() {
         val userAgent: String?
     )
 
-    private class WebViewRefreshLayout(
-        context: Context,
-        private val childCanScrollUp: () -> Boolean
-    ) : SwipeRefreshLayout(context) {
-        private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-        private var pullRefreshAllowed = false
-        private var gestureEligible = false
-        private var downX = 0f
-        private var downY = 0f
-
-        fun setPullRefreshAllowed(allowed: Boolean) {
-            pullRefreshAllowed = allowed
-            isEnabled = allowed
-            if (!allowed) {
-                gestureEligible = false
-                isRefreshing = false
-            }
-        }
-
-        override fun canChildScrollUp(): Boolean = childCanScrollUp()
-
-        override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downX = event.x
-                    downY = event.y
-                    gestureEligible = pullRefreshAllowed && !canChildScrollUp()
-                    if (!gestureEligible) return false
-                    return super.onInterceptTouchEvent(event)
-                }
-
-                MotionEvent.ACTION_MOVE -> {
-                    if (!pullRefreshAllowed || !gestureEligible || canChildScrollUp()) {
-                        gestureEligible = false
-                        return false
-                    }
-                    val deltaX = event.x - downX
-                    val deltaY = event.y - downY
-                    if (abs(deltaX) > touchSlop && abs(deltaX) >= abs(deltaY)) {
-                        gestureEligible = false
-                        return false
-                    }
-                    if (deltaY < -touchSlop) {
-                        gestureEligible = false
-                        return false
-                    }
-                    if (deltaY <= touchSlop || deltaY <= abs(deltaX)) return false
-                    return super.onInterceptTouchEvent(event)
-                }
-
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    val intercepted = if (pullRefreshAllowed && gestureEligible) {
-                        super.onInterceptTouchEvent(event)
-                    } else {
-                        false
-                    }
-                    gestureEligible = false
-                    return intercepted
-                }
-            }
-            return false
-        }
-
-        override fun onTouchEvent(event: MotionEvent): Boolean {
-            if (!pullRefreshAllowed) return false
-            return super.onTouchEvent(event)
-        }
-    }
-
     private val executor = Executors.newSingleThreadExecutor()
     private val preferences by lazy { getSharedPreferences("lumir", Context.MODE_PRIVATE) }
 
@@ -145,7 +75,7 @@ class MainActivity : AppCompatActivity() {
     private val savedPasswordKey = "password.encrypted"
     private val rememberPasswordKey = "password.remember"
     private var webView: WebView? = null
-    private var refreshLayout: WebViewRefreshLayout? = null
+    private var pullRefreshEnabled = false
     private var serverInput: EditText? = null
     private var usernameInput: EditText? = null
     private var passwordInput: EditText? = null
@@ -192,11 +122,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showLogin(message: String? = null) {
-        refreshLayout?.apply {
-            setPullRefreshAllowed(false)
-            removeAllViews()
-        }
-        refreshLayout = null
+        pullRefreshEnabled = false
         webView?.apply {
             stopLoading()
             removeJavascriptInterface("Lumir")
@@ -499,24 +425,64 @@ class MainActivity : AppCompatActivity() {
 
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
-                    refreshLayout?.isRefreshing = false
                     if (isTrustedServerUrl(url, server)) installSessionObserver(view)
                 }
             }
         }
-        val container = WebViewRefreshLayout(this) {
-            view.canScrollVertically(-1)
-        }.apply {
-            setPullRefreshAllowed(false)
-            setColorSchemeColors(green)
-            setProgressBackgroundColorSchemeColor(Color.WHITE)
-            setOnRefreshListener { view.reload() }
-            addView(view, ViewGroup.LayoutParams(-1, -1))
-        }
-        refreshLayout = container
+        installPullRefreshObserver(view)
+        pullRefreshEnabled = false
         webView = view
-        setContentView(container)
+        setContentView(view)
         view.loadUrl(server)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun installPullRefreshObserver(view: WebView) {
+        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
+        val refreshDistance = 72.dp.toFloat()
+        var tracking = false
+        var verticalGesture = false
+        var downX = 0f
+        var downY = 0f
+        var maximumPull = 0f
+
+        view.setOnTouchListener { touchedView, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    tracking = pullRefreshEnabled && !touchedView.canScrollVertically(-1)
+                    verticalGesture = false
+                    downX = event.x
+                    downY = event.y
+                    maximumPull = 0f
+                }
+
+                MotionEvent.ACTION_POINTER_DOWN -> tracking = false
+
+                MotionEvent.ACTION_MOVE -> if (tracking) {
+                    val deltaX = event.x - downX
+                    val deltaY = event.y - downY
+                    if (!verticalGesture && maxOf(abs(deltaX), abs(deltaY)) > touchSlop) {
+                        if (abs(deltaX) >= abs(deltaY)) {
+                            tracking = false
+                        } else {
+                            verticalGesture = true
+                        }
+                    }
+                    if (deltaY < 0 || touchedView.canScrollVertically(-1)) tracking = false
+                    if (tracking && verticalGesture) maximumPull = maxOf(maximumPull, deltaY)
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    val shouldRefresh = tracking && verticalGesture &&
+                        maximumPull >= refreshDistance && pullRefreshEnabled
+                    tracking = false
+                    if (shouldRefresh) touchedView.post { touchedView.reload() }
+                }
+
+                MotionEvent.ACTION_CANCEL -> tracking = false
+            }
+            false
+        }
     }
 
     private fun isTrustedServerUrl(url: String, server: String): Boolean = try {
@@ -593,7 +559,7 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun setPullRefreshEnabled(enabled: Boolean) {
             runOnUiThread {
-                refreshLayout?.setPullRefreshAllowed(enabled)
+                pullRefreshEnabled = enabled
             }
         }
     }
@@ -674,7 +640,7 @@ class MainActivity : AppCompatActivity() {
     private fun leaveWebApp() {
         if (leavingWebApp) return
         leavingWebApp = true
-        refreshLayout?.setPullRefreshAllowed(false)
+        pullRefreshEnabled = false
         CookieManager.getInstance().removeAllCookies {
             CookieManager.getInstance().flush()
             runOnUiThread { showLogin("已退出登录") }
@@ -694,8 +660,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         executor.shutdownNow()
-        refreshLayout?.setPullRefreshAllowed(false)
-        refreshLayout = null
+        pullRefreshEnabled = false
         webView?.removeJavascriptInterface("Lumir")
         webView?.destroy()
         super.onDestroy()
