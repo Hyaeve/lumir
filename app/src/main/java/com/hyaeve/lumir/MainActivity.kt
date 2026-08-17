@@ -7,8 +7,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
-import android.graphics.LinearGradient
-import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
@@ -157,12 +155,21 @@ class MainActivity : AppCompatActivity() {
             background = rounded(Color.WHITE, 0xFFE1E8E1.toInt(), 16f)
             elevation = 8.dp.toFloat()
         }
+        val brandRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 4.dp)
+        }
         val icon = ImageView(this).apply {
             setImageResource(R.drawable.lumic)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
         }
-        panel.addView(icon, LinearLayout.LayoutParams(-1, 88.dp))
-        panel.addView(brandTitle(), marginParams(-1, 42, 0, 4, 0))
+        brandRow.addView(icon, LinearLayout.LayoutParams(72.dp, 72.dp))
+        brandRow.addView(brandTitle(), LinearLayout.LayoutParams(0, 58.dp).apply {
+            weight = 1f
+            leftMargin = 12.dp
+        })
+        panel.addView(brandRow, LinearLayout.LayoutParams(-1, 76.dp))
 
         serverInput = input("服务器地址", preferences.getString("server", "http://127.0.0.1:15500")!!, false)
         usernameInput = input("账号", preferences.getString("username", "") ?: "", false)
@@ -226,82 +233,68 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
     }
 
-    private fun brandTitle(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        addView(TextView(this@MainActivity).apply {
-            text = "Lumic ·"
-            textSize = 25f
+    private fun brandTitle(): FrameLayout = FrameLayout(this).apply {
+        val title = TextView(this@MainActivity).apply {
+            text = "Lumic · 拾光"
+            textSize = 23f
+            gravity = Gravity.CENTER_VERTICAL
             setTextColor(ink)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, -1))
-        addView(TextView(this@MainActivity).apply {
-            text = "拾"
-            textSize = 20f
-            gravity = Gravity.CENTER
-            setTextColor(0xFF527B96.toInt())
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(8.dp, 0, 7.dp, 0)
-            background = rounded(0xFFE9F4FF.toInt(), 0xFFD2E6FA.toInt(), 10f)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 30.dp).apply {
-            leftMargin = 8.dp
-        })
-        addView(TextView(this@MainActivity).apply {
-            text = "光"
-            textSize = 20f
-            gravity = Gravity.CENTER
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(7.dp, 0, 8.dp, 0)
-            background = rounded(0xFFF5F0FF.toInt(), 0xFFE5DDF7.toInt(), 10f)
-            post {
-                paint.shader = LinearGradient(
-                    0f,
-                    0f,
-                    width.toFloat(),
-                    0f,
-                    intArrayOf(0xFF8DC8F7.toInt(), 0xFFB69AEA.toInt(), 0xFFF2C96D.toInt()),
-                    null,
-                    Shader.TileMode.CLAMP
-                )
-                invalidate()
-            }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 30.dp).apply {
-            leftMargin = 2.dp
-        })
+        }
+        addView(title, FrameLayout.LayoutParams(-1, -1))
+
+        val stars = listOf(
+            Triple(0xFF8DC8F7.toInt(), 104, 1),
+            Triple(0xFFB69AEA.toInt(), 126, 41),
+            Triple(0xFFF2C96D.toInt(), 150, 5),
+            Triple(0xFFAEDCF4.toInt(), 166, 37)
+        )
+        stars.forEach { (color, left, top) ->
+            addView(TextView(this@MainActivity).apply {
+                text = "✦"
+                textSize = 8f
+                gravity = Gravity.CENTER
+                setTextColor(color)
+                alpha = 0.9f
+            }, FrameLayout.LayoutParams(14.dp, 14.dp).apply {
+                leftMargin = left.dp
+                topMargin = top.dp
+            })
+        }
     }
 
     private fun showAboutDialog() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(28.dp, 12.dp, 28.dp, 4.dp)
+            setPadding(20.dp, 4.dp, 20.dp, 0)
         }
         content.addView(
             ImageView(this).apply {
                 setImageResource(R.drawable.lumic)
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
             },
-            LinearLayout.LayoutParams(112.dp, 112.dp)
+            LinearLayout.LayoutParams(76.dp, 76.dp)
         )
         content.addView(TextView(this).apply {
             text = "Lumir"
-            textSize = 22f
+            textSize = 19f
             gravity = Gravity.CENTER
             setTextColor(ink)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }, LinearLayout.LayoutParams(-1, 36.dp))
+        }, LinearLayout.LayoutParams(-1, 30.dp))
         content.addView(TextView(this).apply {
             text = "版本 ${BuildConfig.VERSION_NAME}"
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setTextColor(muted)
-        }, LinearLayout.LayoutParams(-1, 32.dp))
-        val status = TextView(this).apply {
             textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(muted)
+        }, LinearLayout.LayoutParams(-1, 26.dp))
+        val status = TextView(this).apply {
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(muted)
         }
-        content.addView(status, LinearLayout.LayoutParams(-1, 32.dp))
+        content.addView(status, LinearLayout.LayoutParams(-1, 26.dp))
 
         val dialog = AlertDialog.Builder(this)
             .setTitle("关于")
@@ -310,6 +303,8 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("检查更新", null)
             .create()
         dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(rounded(Color.WHITE, 0xFFE1E8E1.toInt(), 18f))
+            dialog.window?.setLayout(320.dp, ViewGroup.LayoutParams.WRAP_CONTENT)
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 checkForUpdates(dialog, status)
             }
