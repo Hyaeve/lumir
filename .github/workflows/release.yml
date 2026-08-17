@@ -98,7 +98,7 @@ jobs:
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: 创建 GitHub Release 并上传 APK
+      - name: 创建或更新 GitHub Release 并上传 APK
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
@@ -106,11 +106,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$RELEASE_TAG" \
-            "$APK_PATH" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Lumir $RELEASE_TAG" \
-            --generate-notes
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$APK_PATH" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              "$APK_PATH" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Lumir $RELEASE_TAG" \
+              --generate-notes
+          fi
 
       - name: 清理临时签名密钥
         if: always()
