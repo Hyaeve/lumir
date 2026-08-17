@@ -73,6 +73,7 @@ class MainActivity : AppCompatActivity() {
     private val savedPasswordKey = "password.encrypted"
     private val rememberPasswordKey = "password.remember"
     private var webView: WebView? = null
+    private var refreshLayout: SwipeRefreshLayout? = null
     private var serverInput: EditText? = null
     private var usernameInput: EditText? = null
     private var passwordInput: EditText? = null
@@ -119,6 +120,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showLogin(message: String? = null) {
+        refreshLayout?.apply {
+            isEnabled = false
+            removeAllViews()
+        }
+        refreshLayout = null
         webView?.apply {
             stopLoading()
             removeJavascriptInterface("Lumir")
@@ -129,7 +135,7 @@ class MainActivity : AppCompatActivity() {
         val savedPassword = decryptPassword().orEmpty()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
+            gravity = Gravity.CENTER
             setPadding(30.dp)
             setBackgroundColor(this@MainActivity.background)
         }
@@ -220,11 +226,11 @@ class MainActivity : AppCompatActivity() {
         field.background = null
         addView(field, LinearLayout.LayoutParams(0, -1, 1f))
         addView(ImageButton(this@MainActivity).apply {
-            setImageResource(android.R.drawable.ic_menu_view)
+            setImageResource(R.drawable.ic_password_visibility_off)
             contentDescription = "显示密码"
             setColorFilter(muted)
             setBackgroundColor(Color.TRANSPARENT)
-            setPadding(12.dp)
+            setPadding(13.dp)
             setOnClickListener {
                 val field = passwordInput ?: return@setOnClickListener
                 val hidden = field.transformationMethod is PasswordTransformationMethod
@@ -233,6 +239,10 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     PasswordTransformationMethod.getInstance()
                 }
+                setImageResource(
+                    if (hidden) R.drawable.ic_password_visibility
+                    else R.drawable.ic_password_visibility_off
+                )
                 contentDescription = if (hidden) "隐藏密码" else "显示密码"
                 setColorFilter(if (hidden) green else muted)
                 field.setSelection(field.text.length)
@@ -384,7 +394,6 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
     private fun showWebApp(server: String) {
         leavingWebApp = false
-        lateinit var refreshLayout: SwipeRefreshLayout
         val view = WebView(this).apply {
             val cookieManager = CookieManager.getInstance()
             cookieManager.setAcceptCookie(true)
@@ -418,21 +427,23 @@ class MainActivity : AppCompatActivity() {
 
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
-                    refreshLayout.isRefreshing = false
+                    refreshLayout?.isRefreshing = false
                     if (isTrustedServerUrl(url, server)) installSessionObserver(view)
                 }
             }
         }
-        refreshLayout = object : SwipeRefreshLayout(this) {
+        val container = object : SwipeRefreshLayout(this) {
             override fun canChildScrollUp(): Boolean = view.canScrollVertically(-1)
         }.apply {
+            isEnabled = false
             setColorSchemeColors(green)
             setProgressBackgroundColorSchemeColor(Color.WHITE)
             setOnRefreshListener { view.reload() }
             addView(view, ViewGroup.LayoutParams(-1, -1))
         }
+        refreshLayout = container
         webView = view
-        setContentView(refreshLayout)
+        setContentView(container)
         view.loadUrl(server)
     }
 
@@ -505,6 +516,16 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun copyLink(url: String) {
             runOnUiThread { copyLinkToClipboard(url) }
+        }
+
+        @JavascriptInterface
+        fun setPullRefreshEnabled(enabled: Boolean) {
+            runOnUiThread {
+                refreshLayout?.apply {
+                    isEnabled = enabled
+                    if (!enabled) isRefreshing = false
+                }
+            }
         }
     }
 
@@ -584,6 +605,7 @@ class MainActivity : AppCompatActivity() {
     private fun leaveWebApp() {
         if (leavingWebApp) return
         leavingWebApp = true
+        refreshLayout?.isEnabled = false
         CookieManager.getInstance().removeAllCookies {
             CookieManager.getInstance().flush()
             runOnUiThread { showLogin("已退出登录") }
@@ -603,6 +625,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         executor.shutdownNow()
+        refreshLayout = null
         webView?.removeJavascriptInterface("Lumir")
         webView?.destroy()
         super.onDestroy()
