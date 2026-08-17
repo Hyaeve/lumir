@@ -88,6 +88,31 @@ jobs:
           echo "path=$output" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: 生成版本更新日志
+        id: release_notes
+        env:
+          VERSION: ${{ steps.apk.outputs.version }}
+          APK_PATH: ${{ steps.apk.outputs.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          awk -v version="$VERSION" '
+            $0 == "## " version { found=1; next }
+            found && /^## / { exit }
+            found { print }
+            END { if (!found) exit 1 }
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          test -s "$RUNNER_TEMP/release-notes.md"
+          {
+            echo
+            echo "### 下载校验"
+            echo
+            echo '```text'
+            sha256sum "$APK_PATH"
+            echo '```'
+          } >> "$RUNNER_TEMP/release-notes.md"
+          echo "path=$RUNNER_TEMP/release-notes.md" >> "$GITHUB_OUTPUT"
+
       - name: 确定发布标签
         id: release_tag
         shell: bash
@@ -98,15 +123,32 @@ jobs:
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: 校验标签与应用版本
+        env:
+          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+          VERSION: ${{ steps.apk.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RELEASE_TAG" = "v$VERSION" || {
+            echo "发布标签 $RELEASE_TAG 与应用版本 v$VERSION 不一致。"
+            exit 1
+          }
+
       - name: 创建或更新 GitHub Release 并上传 APK
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+          RELEASE_NOTES: ${{ steps.release_notes.outputs.path }}
           APK_PATH: ${{ steps.apk.outputs.path }}
         shell: bash
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Lumir $RELEASE_TAG" \
+              --notes-file "$RELEASE_NOTES"
             gh release upload "$RELEASE_TAG" "$APK_PATH" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
@@ -115,7 +157,7 @@ jobs:
               "$APK_PATH" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Lumir $RELEASE_TAG" \
-              --generate-notes
+              --notes-file "$RELEASE_NOTES"
           fi
 
       - name: 清理临时签名密钥

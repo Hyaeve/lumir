@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.SystemClock
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.text.method.HideReturnsTransformationMethod
@@ -61,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         const val TAG = "LumirAuth"
         const val STORAGE_PERMISSION_REQUEST = 1001
+        const val EXIT_CONFIRMATION_WINDOW_MS = 2_000L
         const val LATEST_RELEASE_URL =
             "https://github.com/Hyaeve/lumir/releases/latest"
         const val RELEASE_TAG_PREFIX =
@@ -98,6 +100,7 @@ class MainActivity : AppCompatActivity() {
     private var loading: ProgressBar? = null
     private var leavingWebApp = false
     private var pendingDownload: PendingDownload? = null
+    private var lastExitBackPressedAt = 0L
 
     private val green = Color.rgb(113, 155, 127)
     private val ink = Color.rgb(52, 67, 63)
@@ -586,6 +589,7 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
     private fun showWebApp(server: String) {
         leavingWebApp = false
+        lastExitBackPressedAt = 0L
         val view = WebView(this).apply {
             val cookieManager = CookieManager.getInstance()
             cookieManager.setAcceptCookie(true)
@@ -849,7 +853,23 @@ class MainActivity : AppCompatActivity() {
 
     override fun onBackPressed() {
         val view = webView
-        if (view?.canGoBack() == true) view.goBack() else super.onBackPressed()
+        if (view?.canGoBack() == true) {
+            view.goBack()
+            return
+        }
+        if (view == null) {
+            super.onBackPressed()
+            return
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        if (lastExitBackPressedAt > 0L && now - lastExitBackPressedAt <= EXIT_CONFIRMATION_WINDOW_MS) {
+            finishAffinity()
+            return
+        }
+
+        lastExitBackPressedAt = now
+        Toast.makeText(this, "再按一次退出程序", Toast.LENGTH_SHORT).show()
     }
 
     override fun onDestroy() {

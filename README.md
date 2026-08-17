@@ -59,7 +59,7 @@ GitHub Secret 保存后无法再次查看原文；如果输错，只能重新更
 
 ### 3. 创建正式版本
 
-先在本地递增 [`versionCode`](app/build.gradle.kts:32) 和 [`versionName`](app/build.gradle.kts:33)，然后执行：
+先在本地递增 [`versionCode`](app/build.gradle.kts:32) 和 [`versionName`](app/build.gradle.kts:33)，并在 [`CHANGELOG.md`](CHANGELOG.md) 中添加与 `versionName` 完全一致的二级标题和更新内容，然后执行：
 
 ```powershell
 git add .
@@ -69,7 +69,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-推送标签后，打开仓库的 `Actions > 发布 Lumir 正式版本`。成功后，打开 `Releases`，即可看到 `Lumir v1.0.0` 和签名的 `app-release.apk`。
+推送标签后，打开仓库的 `Actions > 发布 Lumir 正式版本`。工作流会校验标签、应用版本和更新日志一致；成功后，打开 `Releases`，即可看到版本更新日志、APK SHA-256 校验值和签名 APK。
 
 也可以不推送标签，进入 `Actions > 发布 Lumir 正式版本 > Run workflow`，输入标签（例如 `v1.0.0`）后运行。
 
