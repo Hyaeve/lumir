@@ -34,9 +34,11 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.FrameLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -59,7 +61,19 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         const val TAG = "LumirAuth"
         const val STORAGE_PERMISSION_REQUEST = 1001
+        const val LATEST_RELEASE_URL =
+            "https://github.com/Hyaeve/lumir/releases/latest"
+        const val RELEASE_TAG_PREFIX =
+            "https://github.com/Hyaeve/lumir/releases/tag/v"
+        const val RELEASE_DOWNLOAD_PREFIX =
+            "https://github.com/Hyaeve/lumir/releases/download/v"
     }
+
+    private data class ReleaseUpdate(
+        val version: String,
+        val downloadUrl: String,
+        val fileName: String
+    )
 
     private data class PendingDownload(
         val url: String,
@@ -131,9 +145,7 @@ class MainActivity : AppCompatActivity() {
         webView = null
         leavingWebApp = false
         val savedPassword = decryptPassword().orEmpty()
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+        val root = FrameLayout(this).apply {
             setPadding(30.dp)
             setBackgroundColor(this@MainActivity.background)
         }
@@ -198,8 +210,159 @@ class MainActivity : AppCompatActivity() {
         panel.addView(loginButton, LinearLayout.LayoutParams(-1, 48.dp))
         loading = ProgressBar(this).apply { visibility = View.GONE }
         panel.addView(loading, marginParams(-1, 18, 0, 0, 0).apply { gravity = Gravity.CENTER })
-        root.addView(panel, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(
+            panel,
+            FrameLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER
+            }
+        )
+        root.addView(
+            TextView(this).apply {
+                text = "关于"
+                textSize = 14f
+                gravity = Gravity.CENTER
+                setTextColor(muted)
+                setPadding(20.dp, 12.dp, 20.dp, 12.dp)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { showAboutDialog() }
+            },
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 48.dp).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            }
+        )
         setContentView(root)
+    }
+
+    private fun showAboutDialog() {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(28.dp, 12.dp, 28.dp, 4.dp)
+        }
+        content.addView(
+            ImageView(this).apply {
+                setImageResource(R.drawable.lumic)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+            },
+            LinearLayout.LayoutParams(112.dp, 112.dp)
+        )
+        content.addView(TextView(this).apply {
+            text = "Lumir"
+            textSize = 22f
+            gravity = Gravity.CENTER
+            setTextColor(ink)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }, LinearLayout.LayoutParams(-1, 36.dp))
+        content.addView(TextView(this).apply {
+            text = "版本 ${BuildConfig.VERSION_NAME}"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(muted)
+        }, LinearLayout.LayoutParams(-1, 32.dp))
+        val status = TextView(this).apply {
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(muted)
+        }
+        content.addView(status, LinearLayout.LayoutParams(-1, 32.dp))
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("关于")
+            .setView(content)
+            .setNegativeButton("关闭", null)
+            .setPositiveButton("检查更新", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                checkForUpdates(dialog, status)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun checkForUpdates(dialog: AlertDialog, status: TextView) {
+        val button = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        button.isEnabled = false
+        status.text = "正在检查更新..."
+        executor.execute {
+            val result = runCatching { fetchLatestRelease() }
+            runOnUiThread {
+                if (!dialog.isShowing) return@runOnUiThread
+                button.isEnabled = true
+                result.onSuccess { update ->
+                    if (isNewerVersion(update.version, BuildConfig.VERSION_NAME)) {
+                        status.text = "发现新版本 ${update.version}"
+                        showUpdateDialog(update)
+                    } else {
+                        status.text = "当前已是最新版本"
+                    }
+                }.onFailure {
+                    Log.w(TAG, "Update check failed: ${it.message}")
+                    status.text = "检查失败，请稍后重试"
+                }
+            }
+        }
+    }
+
+    private fun fetchLatestRelease(): ReleaseUpdate {
+        val connection = (URL(LATEST_RELEASE_URL).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 10000
+            readTimeout = 15000
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "Lumir/${BuildConfig.VERSION_NAME}")
+        }
+        try {
+            if (connection.responseCode !in 200..299) {
+                throw IllegalStateException("GitHub returned HTTP ${connection.responseCode}")
+            }
+            val releaseUrl = connection.url.toString().trimEnd('/')
+            if (!releaseUrl.startsWith(RELEASE_TAG_PREFIX)) {
+                throw IllegalStateException("Unexpected GitHub release URL")
+            }
+            val version = releaseUrl.removePrefix(RELEASE_TAG_PREFIX)
+            if (!version.matches(Regex("[0-9]+(?:\\.[0-9]+)*"))) {
+                throw IllegalStateException("Invalid release version")
+            }
+            val fileName = "Lumir.v$version.apk"
+            return ReleaseUpdate(
+                version = version,
+                downloadUrl = "$RELEASE_DOWNLOAD_PREFIX$version/$fileName",
+                fileName = fileName
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun isNewerVersion(candidate: String, current: String): Boolean {
+        val candidateParts = candidate.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+        val currentParts = current.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+        for (index in 0 until maxOf(candidateParts.size, currentParts.size)) {
+            val difference = candidateParts.getOrElse(index) { 0 } -
+                currentParts.getOrElse(index) { 0 }
+            if (difference != 0) return difference > 0
+        }
+        return false
+    }
+
+    private fun showUpdateDialog(update: ReleaseUpdate) {
+        AlertDialog.Builder(this)
+            .setTitle("发现新版本 ${update.version}")
+            .setMessage("下载完成后，点击系统通知即可安装更新。")
+            .setNegativeButton("暂不更新", null)
+            .setPositiveButton("下载更新") { _, _ ->
+                requestDownload(
+                    PendingDownload(
+                        url = update.downloadUrl,
+                        fileName = update.fileName,
+                        mimeType = "application/vnd.android.package-archive",
+                        userAgent = "Lumir/${BuildConfig.VERSION_NAME}"
+                    )
+                )
+            }
+            .show()
     }
 
     private fun input(hint: String, value: String, password: Boolean): EditText = EditText(this).apply {
