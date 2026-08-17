@@ -476,7 +476,7 @@ class MainActivity : AppCompatActivity() {
                     val shouldRefresh = tracking && verticalGesture &&
                         maximumPull >= refreshDistance && pullRefreshEnabled
                     tracking = false
-                    if (shouldRefresh) touchedView.post { touchedView.reload() }
+                    if (shouldRefresh) view.post { view.reload() }
                 }
 
                 MotionEvent.ACTION_CANCEL -> tracking = false
