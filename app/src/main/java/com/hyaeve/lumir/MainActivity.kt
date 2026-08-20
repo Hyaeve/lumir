@@ -405,7 +405,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showUpdateDialog(update: ReleaseUpdate) {
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("发现新版本 ${update.version}")
             .setMessage("下载完成后，点击系统通知即可安装更新。")
             .setNegativeButton("暂不更新", null)
@@ -419,7 +419,24 @@ class MainActivity : AppCompatActivity() {
                     )
                 )
             }
-            .show()
+            .create()
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(rounded(Color.WHITE, 0xFFE1E8E1.toInt(), 20f))
+            dialog.window?.setLayout(332.dp, ViewGroup.LayoutParams.WRAP_CONTENT)
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).apply {
+                setTextColor(muted)
+                isAllCaps = false
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).apply {
+                setTextColor(green)
+                isAllCaps = false
+            }
+            dialog.findViewById<TextView>(android.R.id.message)?.apply {
+                setTextColor(ink)
+                setPadding(24.dp, 4.dp, 24.dp, 8.dp)
+            }
+        }
+        dialog.show()
     }
 
     private fun input(hint: String, value: String, password: Boolean): EditText = EditText(this).apply {
