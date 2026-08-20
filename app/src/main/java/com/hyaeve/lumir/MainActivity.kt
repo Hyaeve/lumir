@@ -69,6 +69,9 @@ class MainActivity : AppCompatActivity() {
         const val STORAGE_PERMISSION_REQUEST = 1001
         const val EXIT_CONFIRMATION_WINDOW_MS = 2_000L
         const val DEFAULT_IMAGE_CACHE_MB = 256
+        const val MIN_IMAGE_CACHE_MB = 128
+        const val MAX_IMAGE_CACHE_MB = 5120
+        const val IMAGE_CACHE_STEP_MB = 128
         const val IMAGE_CACHE_LIMIT_KEY = "image.cache.limit.mb"
         const val AVATAR_CACHE_MAX_AGE_MS = 6L * 60L * 60L * 1000L
         const val LATEST_RELEASE_URL =
@@ -108,6 +111,7 @@ class MainActivity : AppCompatActivity() {
     private var loginButton: Button? = null
     private var loading: ProgressBar? = null
     private var leavingWebApp = false
+    private var showingCacheSettings = false
     private var pendingDownload: PendingDownload? = null
     private var lastExitBackPressedAt = 0L
 
@@ -149,6 +153,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showLogin(message: String? = null) {
         pullRefreshEnabled = false
+        showingCacheSettings = false
         webView?.apply {
             stopLoading()
             removeJavascriptInterface("Lumir")
@@ -225,13 +230,6 @@ class MainActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER
             }
         )
-        fun footerButtonParams(gravity: Int) = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            48.dp
-        ).apply {
-            this.gravity = gravity
-            bottomMargin = 8.dp
-        }
         root.addView(
             TextView(this).apply {
                 text = "关于 Lumir · 版本与更新"
@@ -244,22 +242,27 @@ class MainActivity : AppCompatActivity() {
                 isFocusable = true
                 setOnClickListener { showAboutDialog() }
             },
-            footerButtonParams(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 48.dp).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = 8.dp
+            }
         )
         root.addView(
             TextView(this).apply {
-                text = "图片缓存设置"
-                textSize = 13f
+                text = "⚙"
+                textSize = 23f
                 gravity = Gravity.CENTER
+                contentDescription = "图片缓存设置"
                 setTextColor(green)
-                setPadding(24.dp, 12.dp, 24.dp, 12.dp)
                 background = rounded(0xFFF0F5F0.toInt(), 0xFFDCE9DD.toInt(), 16f)
                 isClickable = true
                 isFocusable = true
                 setOnClickListener { showCacheSettings() }
             },
-            footerButtonParams(Gravity.BOTTOM or Gravity.END).apply {
+            FrameLayout.LayoutParams(48.dp, 48.dp).apply {
+                gravity = Gravity.BOTTOM or Gravity.END
                 rightMargin = 12.dp
+                bottomMargin = 8.dp
             }
         )
         setContentView(root)
@@ -337,6 +340,9 @@ class MainActivity : AppCompatActivity() {
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawable(rounded(Color.WHITE, 0xFFE1E8E1.toInt(), 18f))
             dialog.window?.setLayout(320.dp, ViewGroup.LayoutParams.WRAP_CONTENT)
+            dialog.findViewById<TextView>(android.R.id.alertTitle)?.setTextColor(ink)
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(muted)
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(green)
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 checkForUpdates(dialog, status)
             }
@@ -679,7 +685,6 @@ class MainActivity : AppCompatActivity() {
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                     if (isTrustedServerUrl(url, server)) {
-                        installWebAppEnvironment(view)
                         installSessionObserver(view)
                     }
                 }
@@ -780,29 +785,6 @@ class MainActivity : AppCompatActivity() {
                 } catch (_) {}
                 return originalOpen(url, target, features);
               };
-            })();
-            """.trimIndent(),
-            null
-        )
-    }
-
-    private fun installWebAppEnvironment(view: WebView) {
-        view.evaluateJavascript(
-            """
-            (() => {
-              document.documentElement.classList.add('lumir-webview');
-              document.body?.classList.add('lumir-webview');
-              if (document.getElementById('lumir-webview-material-fix')) return;
-              const style = document.createElement('style');
-              style.id = 'lumir-webview-material-fix';
-              style.textContent = `
-                .lumir-webview .phone-ui :is(.mobile-menu-toggle, .mobile-timeline-toggle, .scroll-top-button).mobile-frosted-control {
-                  -webkit-backdrop-filter: blur(8px) saturate(142%) contrast(.97) !important;
-                  backdrop-filter: blur(8px) saturate(142%) contrast(.97) !important;
-                  transform: translate3d(0, 0, 0);
-                }
-              `;
-              document.head.appendChild(style);
             })();
             """.trimIndent(),
             null
@@ -933,6 +915,10 @@ class MainActivity : AppCompatActivity() {
     } catch (_: Exception) { null }
 
     override fun onBackPressed() {
+        if (showingCacheSettings) {
+            showLogin()
+            return
+        }
         val view = webView
         if (view?.canGoBack() == true) {
             view.goBack()
@@ -962,62 +948,114 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showCacheSettings() {
-        val content = LinearLayout(this).apply {
+        showingCacheSettings = true
+        val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24.dp, 4.dp, 24.dp, 0)
+            setPadding(24.dp)
+            setBackgroundColor(this@MainActivity.background)
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(TextView(this).apply {
+            text = "‹"
+            textSize = 36f
+            gravity = Gravity.CENTER
+            contentDescription = "返回登录页"
+            setTextColor(ink)
+            background = rounded(0xFFF0F5F0.toInt(), 0xFFDCE9DD.toInt(), 16f)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showLogin() }
+        }, LinearLayout.LayoutParams(48.dp, 48.dp))
+        header.addView(TextView(this).apply {
+            text = "图片缓存设置"
+            textSize = 21f
+            setTextColor(ink)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER_VERTICAL
+        }, LinearLayout.LayoutParams(0, 48.dp, 1f).apply { leftMargin = 16.dp })
+        root.addView(header, LinearLayout.LayoutParams(-1, 56.dp))
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(22.dp)
+            background = rounded(Color.WHITE, 0xFFE1E8E1.toInt(), 18f)
+            elevation = 5.dp.toFloat()
         }
         val value = TextView(this).apply {
-            textSize = 16f
+            textSize = 18f
             setTextColor(ink)
-            gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
+        val currentLimit = preferences.getInt(IMAGE_CACHE_LIMIT_KEY, DEFAULT_IMAGE_CACHE_MB)
+            .coerceIn(MIN_IMAGE_CACHE_MB, MAX_IMAGE_CACHE_MB)
         val bar = SeekBar(this).apply {
-            max = 1024 - 32
-            progress = preferences.getInt(IMAGE_CACHE_LIMIT_KEY, DEFAULT_IMAGE_CACHE_MB).coerceIn(32, 1024) - 32
+            max = (MAX_IMAGE_CACHE_MB - MIN_IMAGE_CACHE_MB) / IMAGE_CACHE_STEP_MB
+            progress = (currentLimit - MIN_IMAGE_CACHE_MB) / IMAGE_CACHE_STEP_MB
+            progressTintList = android.content.res.ColorStateList.valueOf(green)
+            thumbTintList = android.content.res.ColorStateList.valueOf(green)
         }
-        fun updateValue() { value.text = "图片缓存上限  ${bar.progress + 32} MB" }
+        fun selectedMb() = MIN_IMAGE_CACHE_MB + bar.progress * IMAGE_CACHE_STEP_MB
+        fun updateValue() { value.text = "图片缓存（MB）  ${selectedMb()}.0" }
         updateValue()
         bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) = updateValue()
             override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                val mb = (seekBar?.progress ?: 224) + 32
-                preferences.edit().putInt(IMAGE_CACHE_LIMIT_KEY, mb).apply()
+                preferences.edit().putInt(IMAGE_CACHE_LIMIT_KEY, selectedMb()).apply()
                 executor.execute { imageCache.trimToLimit() }
             }
         })
-        content.addView(value, LinearLayout.LayoutParams(-1, 36.dp))
-        content.addView(bar, LinearLayout.LayoutParams(-1, 48.dp))
-        content.addView(TextView(this).apply {
-            text = "头像和动态预览图共用此容量，超出后按最早缓存时间清理。"
-            textSize = 12f
+        card.addView(value, LinearLayout.LayoutParams(-1, 42.dp))
+        card.addView(bar, LinearLayout.LayoutParams(-1, 56.dp))
+        card.addView(TextView(this).apply {
+            text = "可设置范围：128 MB 至 5120 MB。超过上限后按最早缓存时间自动清理。"
+            textSize = 13f
             setTextColor(muted)
-            setPadding(0, 8.dp, 0, 12.dp)
+            setPadding(0, 4.dp, 0, 18.dp)
         }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("图片缓存")
-            .setView(content)
-            .setNegativeButton("关闭", null)
-            .setPositiveButton("立即清理", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.window?.setBackgroundDrawable(rounded(Color.WHITE, 0xFFE1E8E1.toInt(), 20f))
-            dialog.window?.setLayout(332.dp, ViewGroup.LayoutParams.WRAP_CONTENT)
-            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).apply {
-                setTextColor(muted)
-                isAllCaps = false
-            }
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).apply {
-                setTextColor(green)
-                isAllCaps = false
-            }
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                executor.execute { imageCache.clear() }
-                Toast.makeText(this, "图片缓存已清理", Toast.LENGTH_SHORT).show()
-                dialog.dismiss()
-            }
+        val usage = TextView(this).apply {
+            text = "已缓存：正在统计…"
+            textSize = 15f
+            setTextColor(ink)
+            setPadding(0, 12.dp, 0, 18.dp)
         }
-        dialog.show()
+        card.addView(usage, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        card.addView(Button(this).apply {
+            text = "立即清理"
+            textSize = 14f
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            background = rounded(green, Color.TRANSPARENT, 10f)
+            setOnClickListener {
+                isEnabled = false
+                executor.execute {
+                    imageCache.clear()
+                    runOnUiThread {
+                        usage.text = "已缓存：0 B"
+                        isEnabled = true
+                        Toast.makeText(this@MainActivity, "图片缓存已清理", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }, LinearLayout.LayoutParams(-1, 48.dp))
+        root.addView(card, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = 20.dp
+        })
+        setContentView(root)
+        executor.execute {
+            val size = imageCache.sizeBytes()
+            runOnUiThread { if (showingCacheSettings) usage.text = "已缓存：${formatBytes(size)}" }
+        }
+    }
+
+    private fun formatBytes(bytes: Long): String = when {
+        bytes >= 1024L * 1024L * 1024L -> String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
+        bytes >= 1024L * 1024L -> String.format("%.2f MB", bytes / (1024.0 * 1024.0))
+        bytes >= 1024L -> String.format("%.2f KB", bytes / 1024.0)
+        else -> "$bytes B"
     }
 
     private inner class ImageCache(context: Context) {
@@ -1050,6 +1088,10 @@ class MainActivity : AppCompatActivity() {
 
         fun trimToLimit() = synchronized(lock) { trimToLimitLocked() }
 
+        fun sizeBytes(): Long = synchronized(lock) {
+            directory.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
+        }
+
         fun clear() = synchronized(lock) { directory.listFiles()?.forEach { it.delete() } }
 
         private fun download(url: String): ByteArray? {
@@ -1081,7 +1123,7 @@ class MainActivity : AppCompatActivity() {
 
         private fun trimToLimitLocked() {
             val limit = preferences.getInt(IMAGE_CACHE_LIMIT_KEY, DEFAULT_IMAGE_CACHE_MB)
-                .coerceIn(32, 1024).toLong() * 1024L * 1024L
+                .coerceIn(MIN_IMAGE_CACHE_MB, MAX_IMAGE_CACHE_MB).toLong() * 1024L * 1024L
             val files = directory.listFiles()?.filter { it.isFile }.orEmpty()
             var total = files.sumOf { it.length() }
             files.sortedBy { it.lastModified() }.forEach { file ->
