@@ -224,6 +224,13 @@ class MainActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER
             }
         )
+        fun footerButtonParams(gravity: Int) = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            48.dp
+        ).apply {
+            this.gravity = gravity
+            bottomMargin = 8.dp
+        }
         root.addView(
             TextView(this).apply {
                 text = "关于 Lumir · 版本与更新"
@@ -236,24 +243,22 @@ class MainActivity : AppCompatActivity() {
                 isFocusable = true
                 setOnClickListener { showAboutDialog() }
             },
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 48.dp).apply {
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = 8.dp
-            }
+            footerButtonParams(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
         )
         root.addView(
-            ImageButton(this).apply {
-                setImageResource(android.R.drawable.ic_menu_preferences)
-                contentDescription = "图片缓存设置"
-                setColorFilter(green)
-                setPadding(12.dp)
-                background = rounded(0xFFF0F5F0.toInt(), 0xFFDCE9DD.toInt(), 18f)
+            TextView(this).apply {
+                text = "图片缓存设置"
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setTextColor(green)
+                setPadding(24.dp, 12.dp, 24.dp, 12.dp)
+                background = rounded(0xFFF0F5F0.toInt(), 0xFFDCE9DD.toInt(), 16f)
+                isClickable = true
+                isFocusable = true
                 setOnClickListener { showCacheSettings() }
             },
-            FrameLayout.LayoutParams(52.dp, 52.dp).apply {
-                gravity = Gravity.BOTTOM or Gravity.END
+            footerButtonParams(Gravity.BOTTOM or Gravity.END).apply {
                 rightMargin = 12.dp
-                bottomMargin = 8.dp
             }
         )
         setContentView(root)
@@ -968,6 +973,16 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("立即清理", null)
             .create()
         dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(rounded(Color.WHITE, 0xFFE1E8E1.toInt(), 20f))
+            dialog.window?.setLayout(332.dp, ViewGroup.LayoutParams.WRAP_CONTENT)
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).apply {
+                setTextColor(muted)
+                isAllCaps = false
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).apply {
+                setTextColor(green)
+                isAllCaps = false
+            }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 executor.execute { imageCache.clear() }
                 Toast.makeText(this, "图片缓存已清理", Toast.LENGTH_SHORT).show()
