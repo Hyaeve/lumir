@@ -70,6 +70,7 @@ class MainActivity : AppCompatActivity() {
         const val EXIT_CONFIRMATION_WINDOW_MS = 2_000L
         const val DEFAULT_IMAGE_CACHE_MB = 256
         const val IMAGE_CACHE_LIMIT_KEY = "image.cache.limit.mb"
+        const val AVATAR_CACHE_MAX_AGE_MS = 6L * 60L * 60L * 1000L
         const val LATEST_RELEASE_URL =
             "https://github.com/Hyaeve/lumir/releases/latest"
         const val RELEASE_TAG_PREFIX =
@@ -636,6 +637,7 @@ class MainActivity : AppCompatActivity() {
         leavingWebApp = false
         lastExitBackPressedAt = 0L
         val view = WebView(this).apply {
+            setLayerType(View.LAYER_TYPE_HARDWARE, null)
             val cookieManager = CookieManager.getInstance()
             cookieManager.setAcceptCookie(true)
             cookieManager.flush()
@@ -676,7 +678,10 @@ class MainActivity : AppCompatActivity() {
 
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
-                    if (isTrustedServerUrl(url, server)) installSessionObserver(view)
+                    if (isTrustedServerUrl(url, server)) {
+                        installWebAppEnvironment(view)
+                        installSessionObserver(view)
+                    }
                 }
             }
         }
@@ -775,6 +780,29 @@ class MainActivity : AppCompatActivity() {
                 } catch (_) {}
                 return originalOpen(url, target, features);
               };
+            })();
+            """.trimIndent(),
+            null
+        )
+    }
+
+    private fun installWebAppEnvironment(view: WebView) {
+        view.evaluateJavascript(
+            """
+            (() => {
+              document.documentElement.classList.add('lumir-webview');
+              document.body?.classList.add('lumir-webview');
+              if (document.getElementById('lumir-webview-material-fix')) return;
+              const style = document.createElement('style');
+              style.id = 'lumir-webview-material-fix';
+              style.textContent = `
+                .lumir-webview .phone-ui :is(.mobile-menu-toggle, .mobile-timeline-toggle, .scroll-top-button).mobile-frosted-control {
+                  -webkit-backdrop-filter: blur(8px) saturate(142%) contrast(.97) !important;
+                  backdrop-filter: blur(8px) saturate(142%) contrast(.97) !important;
+                  transform: translate3d(0, 0, 0);
+                }
+              `;
+              document.head.appendChild(style);
             })();
             """.trimIndent(),
             null
@@ -1007,6 +1035,8 @@ class MainActivity : AppCompatActivity() {
         fun load(url: String): WebResourceResponse? = synchronized(lock) {
             val file = File(directory, hash(url))
             val mime = mimeForUrl(url)
+            val cacheExpired = file.isFile && System.currentTimeMillis() - file.lastModified() > AVATAR_CACHE_MAX_AGE_MS
+            if (cacheExpired) file.delete()
             if (file.isFile && file.length() > 0L) {
                 return WebResourceResponse(mime, null, file.inputStream())
             }
