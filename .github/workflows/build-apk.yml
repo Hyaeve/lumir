@@ -39,7 +39,21 @@ jobs:
         run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build debug APK
-        run: gradle --no-daemon --stacktrace --info assembleDebug
+        shell: bash
+        run: |
+          set +e
+          gradle --no-daemon --stacktrace --info assembleDebug 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E '(^e: |error:|FAILURE:|What went wrong|Execution failed|Unresolved reference|Type mismatch)' \
+              "$RUNNER_TEMP/gradle-build.log" | tail -n 40 | while IFS= read -r line; do
+                line=${line//'%'/'%25'}
+                line=${line//$'\r'/'%0D'}
+                line=${line//$'\n'/'%0A'}
+                echo "::error::$line"
+              done
+          fi
+          exit "$status"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
