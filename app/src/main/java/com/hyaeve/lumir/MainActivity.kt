@@ -340,7 +340,8 @@ class MainActivity : AppCompatActivity() {
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawable(rounded(Color.WHITE, 0xFFE1E8E1.toInt(), 18f))
             dialog.window?.setLayout(320.dp, ViewGroup.LayoutParams.WRAP_CONTENT)
-            dialog.findViewById<TextView>(android.R.id.alertTitle)?.setTextColor(ink)
+            val titleId = resources.getIdentifier("alertTitle", "id", "android")
+            dialog.findViewById<TextView>(titleId)?.setTextColor(ink)
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(muted)
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(green)
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
