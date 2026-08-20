@@ -27,6 +27,7 @@ import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.URLUtil
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -37,6 +38,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.FrameLayout
 import android.widget.ProgressBar
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -45,11 +47,14 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.setPadding
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -63,6 +68,8 @@ class MainActivity : AppCompatActivity() {
         const val TAG = "LumirAuth"
         const val STORAGE_PERMISSION_REQUEST = 1001
         const val EXIT_CONFIRMATION_WINDOW_MS = 2_000L
+        const val DEFAULT_IMAGE_CACHE_MB = 256
+        const val IMAGE_CACHE_LIMIT_KEY = "image.cache.limit.mb"
         const val LATEST_RELEASE_URL =
             "https://github.com/Hyaeve/lumir/releases/latest"
         const val RELEASE_TAG_PREFIX =
@@ -86,6 +93,7 @@ class MainActivity : AppCompatActivity() {
 
     private val executor = Executors.newSingleThreadExecutor()
     private val preferences by lazy { getSharedPreferences("lumir", Context.MODE_PRIVATE) }
+    private val imageCache by lazy { ImageCache(this) }
 
     private val credentialKeyAlias = "lumir.credentials"
     private val savedPasswordKey = "password.encrypted"
@@ -230,6 +238,21 @@ class MainActivity : AppCompatActivity() {
             },
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 48.dp).apply {
                 gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = 8.dp
+            }
+        )
+        root.addView(
+            ImageButton(this).apply {
+                setImageResource(android.R.drawable.ic_menu_preferences)
+                contentDescription = "图片缓存设置"
+                setColorFilter(green)
+                setPadding(12.dp)
+                background = rounded(0xFFF0F5F0.toInt(), 0xFFDCE9DD.toInt(), 18f)
+                setOnClickListener { showCacheSettings() }
+            },
+            FrameLayout.LayoutParams(52.dp, 52.dp).apply {
+                gravity = Gravity.BOTTOM or Gravity.END
+                rightMargin = 12.dp
                 bottomMargin = 8.dp
             }
         )
@@ -614,6 +637,14 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                    val url = request.url.toString()
+                    if (!request.isForMainFrame && imageCache.shouldCache(url, server)) {
+                        return imageCache.load(url)
+                    }
+                    return super.shouldInterceptRequest(view, request)
+                }
+
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val url = request.url.toString()
                     if (isTrustedServerUrl(url, server)) return false
@@ -878,6 +909,140 @@ class MainActivity : AppCompatActivity() {
         webView?.removeJavascriptInterface("Lumir")
         webView?.destroy()
         super.onDestroy()
+    }
+
+    private fun showCacheSettings() {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24.dp, 4.dp, 24.dp, 0)
+        }
+        val value = TextView(this).apply {
+            textSize = 16f
+            setTextColor(ink)
+            gravity = Gravity.CENTER
+        }
+        val bar = SeekBar(this).apply {
+            max = 1024 - 32
+            progress = preferences.getInt(IMAGE_CACHE_LIMIT_KEY, DEFAULT_IMAGE_CACHE_MB).coerceIn(32, 1024) - 32
+        }
+        fun updateValue() { value.text = "图片缓存上限  ${bar.progress + 32} MB" }
+        updateValue()
+        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) = updateValue()
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val mb = (seekBar?.progress ?: 224) + 32
+                preferences.edit().putInt(IMAGE_CACHE_LIMIT_KEY, mb).apply()
+                executor.execute { imageCache.trimToLimit() }
+            }
+        })
+        content.addView(value, LinearLayout.LayoutParams(-1, 36.dp))
+        content.addView(bar, LinearLayout.LayoutParams(-1, 48.dp))
+        content.addView(TextView(this).apply {
+            text = "头像和动态预览图共用此容量，超出后按最早缓存时间清理。"
+            textSize = 12f
+            setTextColor(muted)
+            setPadding(0, 8.dp, 0, 12.dp)
+        }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("图片缓存")
+            .setView(content)
+            .setNegativeButton("关闭", null)
+            .setPositiveButton("立即清理", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                executor.execute { imageCache.clear() }
+                Toast.makeText(this, "图片缓存已清理", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+    }
+
+    private inner class ImageCache(context: Context) {
+        private val directory = File(context.filesDir, "image-cache").apply { mkdirs() }
+        private val lock = Any()
+
+        fun shouldCache(url: String, server: String): Boolean {
+            if (!isTrustedServerUrl(url, server)) return false
+            val uri = runCatching { URI(url) }.getOrNull() ?: return false
+            val path = uri.path.orEmpty().lowercase()
+            return path.startsWith("/preview/") ||
+                (path.startsWith("/flow/") && path.substringAfterLast('/').startsWith("avatar."))
+        }
+
+        fun load(url: String): WebResourceResponse? = synchronized(lock) {
+            val file = File(directory, hash(url))
+            val mime = mimeForUrl(url)
+            if (file.isFile && file.length() > 0L) {
+                return WebResourceResponse(mime, null, file.inputStream())
+            }
+            download(url)?.let { bytes ->
+                runCatching { writeAtomically(file, bytes) }
+                trimToLimitLocked()
+                return WebResourceResponse(mime, null, ByteArrayInputStream(bytes))
+            }
+            null
+        }
+
+        fun trimToLimit() = synchronized(lock) { trimToLimitLocked() }
+
+        fun clear() = synchronized(lock) { directory.listFiles()?.forEach { it.delete() } }
+
+        private fun download(url: String): ByteArray? {
+            val connection = (URL(url).openConnection() as? HttpURLConnection) ?: return null
+            return try {
+                connection.connectTimeout = 10000
+                connection.readTimeout = 20000
+                connection.setRequestProperty("User-Agent", "Lumir/${BuildConfig.VERSION_NAME}")
+                CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotBlank() }?.let {
+                    connection.setRequestProperty("Cookie", it)
+                }
+                if (connection.responseCode !in 200..299) return null
+                val mime = connection.contentType?.substringBefore(';')?.lowercase().orEmpty()
+                if (!mime.startsWith("image/")) return null
+                connection.inputStream.use { it.readBytes() }
+            } catch (exception: Exception) {
+                Log.w(TAG, "Image cache download failed: ${exception.message}")
+                null
+            } finally {
+                connection.disconnect()
+            }
+        }
+
+        private fun writeAtomically(target: File, bytes: ByteArray) {
+            val temporary = File(target.parentFile, "${target.name}.tmp")
+            temporary.outputStream().use { it.write(bytes) }
+            if (!temporary.renameTo(target)) temporary.delete()
+        }
+
+        private fun trimToLimitLocked() {
+            val limit = preferences.getInt(IMAGE_CACHE_LIMIT_KEY, DEFAULT_IMAGE_CACHE_MB)
+                .coerceIn(32, 1024).toLong() * 1024L * 1024L
+            val files = directory.listFiles()?.filter { it.isFile }.orEmpty()
+            var total = files.sumOf { it.length() }
+            files.sortedBy { it.lastModified() }.forEach { file ->
+                if (total <= limit) return@forEach
+                val length = file.length()
+                if (file.delete()) total -= length
+            }
+        }
+
+        private fun mimeForUrl(url: String): String {
+            return when (runCatching { URI(url).path.substringAfterLast('.').lowercase() }.getOrDefault("")) {
+                "png" -> "image/png"
+                "webp" -> "image/webp"
+                "gif" -> "image/gif"
+                "avif" -> "image/avif"
+                else -> "image/jpeg"
+            }
+        }
+
+        private fun hash(value: String): String {
+            val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(StandardCharsets.UTF_8))
+            return digest.joinToString("") { "%02x".format(it) }
+        }
     }
 
     private fun rounded(fill: Int, stroke: Int, radius: Float) = GradientDrawable().apply {
