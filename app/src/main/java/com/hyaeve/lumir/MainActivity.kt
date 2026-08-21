@@ -644,7 +644,6 @@ class MainActivity : AppCompatActivity() {
         leavingWebApp = false
         lastExitBackPressedAt = 0L
         val view = WebView(this).apply {
-            setLayerType(View.LAYER_TYPE_HARDWARE, null)
             val cookieManager = CookieManager.getInstance()
             cookieManager.setAcceptCookie(true)
             cookieManager.flush()
