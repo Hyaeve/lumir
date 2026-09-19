@@ -42,9 +42,11 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.setPadding
+import androidx.core.view.WindowCompat
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -122,6 +124,9 @@ class MainActivity : AppCompatActivity() {
         window.statusBarColor = background
         window.navigationBarColor = background
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() = handleBackNavigation()
+        })
         showSplash()
     }
 
@@ -149,6 +154,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showLogin(message: String? = null) {
+        applyWebTheme(false)
         showingCacheSettings = false
         webView?.apply {
             stopLoading()
@@ -649,6 +655,13 @@ class MainActivity : AppCompatActivity() {
             settings.layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                settings.isAlgorithmicDarkeningAllowed = false
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                @Suppress("DEPRECATION")
+                settings.forceDark = WebSettings.FORCE_DARK_OFF
+            }
             settings.allowFileAccess = false
             settings.mediaPlaybackRequiresUserGesture = false
             addJavascriptInterface(SessionBridge(server), "Lumir")
@@ -691,6 +704,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         webView = view
+        applyWebTheme(preferences.getBoolean("web.dark", false))
         setContentView(view)
         view.loadUrl(server)
     }
@@ -705,42 +719,33 @@ class MainActivity : AppCompatActivity() {
 
     private fun installSessionObserver(view: WebView) {
         view.evaluateJavascript(
-            """
-            (() => {
-              if (window.__lumirSessionObserver) return;
-              window.__lumirSessionObserver = true;
-              const originalFetch = window.fetch.bind(window);
-              window.fetch = async (...args) => {
-                const response = await originalFetch(...args);
-                try {
-                  const url = new URL(typeof args[0] === 'string' ? args[0] : args[0].url, location.href);
-                  if (url.origin === location.origin && url.pathname === '/api/logout' && response.ok) {
-                    window.Lumir.onSignedOut();
-                  } else if (url.origin === location.origin && url.pathname === '/api/session' && response.ok) {
-                    const session = await response.clone().json();
-                    if (!session.authenticated) window.Lumir.onSignedOut();
-                  }
-                } catch (_) {}
-                return response;
-              };
-              const originalOpen = window.open.bind(window);
-              window.open = (url, target, features) => {
-                try {
-                  const external = new URL(String(url || ''), location.href);
-                  if (external.origin !== location.origin && /^https?:$/.test(external.protocol)) {
-                    window.Lumir.copyLink(external.href);
-                    return null;
-                  }
-                } catch (_) {}
-                return originalOpen(url, target, features);
-              };
-            })();
-            """.trimIndent(),
+            assets.open("web-compat.js").bufferedReader().use { it.readText() },
             null
         )
     }
 
+    private fun applyWebTheme(dark: Boolean) {
+        val surface = if (dark) Color.rgb(8, 10, 14) else Color.rgb(251, 247, 234)
+        window.statusBarColor = surface
+        window.navigationBarColor = surface
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
+        webView?.setBackgroundColor(surface)
+    }
+
     private inner class SessionBridge(private val server: String) {
+        @JavascriptInterface
+        fun setTheme(dark: Boolean) {
+            runOnUiThread {
+                val url = webView?.url ?: return@runOnUiThread
+                if (leavingWebApp || !isTrustedServerUrl(url, server)) return@runOnUiThread
+                preferences.edit().putBoolean("web.dark", dark).apply()
+                applyWebTheme(dark)
+            }
+        }
+
         @JavascriptInterface
         fun onSignedOut() {
             runOnUiThread { leaveWebApp() }
@@ -859,18 +864,19 @@ class MainActivity : AppCompatActivity() {
         else "${uri.scheme}://${uri.rawAuthority}".trimEnd('/')
     } catch (_: Exception) { null }
 
-    override fun onBackPressed() {
+    private fun handleBackNavigation() {
         if (showingCacheSettings) {
             showLogin()
             return
         }
         val view = webView
         if (view?.canGoBack() == true) {
+            lastExitBackPressedAt = 0L
             view.goBack()
             return
         }
         if (view == null) {
-            super.onBackPressed()
+            finish()
             return
         }
 

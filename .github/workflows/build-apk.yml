@@ -45,7 +45,8 @@ jobs:
         shell: bash
         run: |
           set +e
-          gradle --no-daemon --stacktrace --info assembleDebug 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"
+          node --test tests/web-compat.test.cjs || exit $?
+          gradle --no-daemon --stacktrace --info assembleDebug lintDebug 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             grep -E '(^e: |error:|FAILURE:|What went wrong|Execution failed|Unresolved reference|Type mismatch)' \

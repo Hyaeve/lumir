@@ -76,7 +76,9 @@ jobs:
       - name: 构建正式签名 APK
         env:
           LUMIR_KEYSTORE_FILE: ${{ runner.temp }}/lumir-release.jks
-        run: gradle --no-daemon --stacktrace assembleRelease
+        run: |
+          node --test tests/web-compat.test.cjs
+          gradle --no-daemon --stacktrace assembleRelease
 
       - name: 按版本命名 64 位 APK
         id: apk

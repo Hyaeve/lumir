@@ -2,6 +2,16 @@
 
 Lumir 是 Lumic 自托管服务的 Android 客户端。客户端启动时显示 Lumic 图标，输入 Lumic 服务器地址、账号和密码后，通过 WebView 使用 Docker 服务中已经完成的界面与功能。
 
+## Lumic 页面兼容
+
+- 背景图库、图片原图、瀑布流详情和切图动画使用服务器提供的网页实现，客户端不重复注入 CSS 或手势。
+- 系统栏及 WebView 底色随网页日夜主题同步，关闭自动网页变色和原生边缘回弹。
+- 导航键和系统返回手势交给 WebView 历史返回，保留网页背景大图、视图模式和弹窗的返回动画。
+- 本地图片缓存只处理已有的预览图、头像路径，不缓存 `/api/v1/gallery` 或背景原图。
+- iOS Safari/PWA 的安全区样式不复制到 Android；安卓更新不会代替 Lumic 服务端的部署更新。
+
+兼容脚本回归测试：`node --test tests/web-compat.test.cjs`。CI 同时进行 APK 构建和 Android Lint。
+
 ## 本地构建
 
 使用 Android Studio 打开本目录，安装 JDK 17 和 Android SDK 35，等待 Gradle 同步完成，然后执行：
