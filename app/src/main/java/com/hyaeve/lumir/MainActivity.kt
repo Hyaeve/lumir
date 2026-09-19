@@ -19,9 +19,7 @@ import android.text.method.HideReturnsTransformationMethod
 import android.text.method.PasswordTransformationMethod
 import android.util.Log
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
-import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
@@ -29,6 +27,7 @@ import android.webkit.URLUtil
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
+import android.webkit.WebSettings
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.CheckBox
@@ -61,7 +60,6 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import android.util.Base64
-import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
     private companion object {
@@ -103,7 +101,6 @@ class MainActivity : AppCompatActivity() {
     private val savedPasswordKey = "password.encrypted"
     private val rememberPasswordKey = "password.remember"
     private var webView: WebView? = null
-    private var pullRefreshEnabled = false
     private var serverInput: EditText? = null
     private var usernameInput: EditText? = null
     private var passwordInput: EditText? = null
@@ -152,7 +149,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showLogin(message: String? = null) {
-        pullRefreshEnabled = false
         showingCacheSettings = false
         webView?.apply {
             stopLoading()
@@ -649,6 +645,10 @@ class MainActivity : AppCompatActivity() {
             cookieManager.flush()
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.useWideViewPort = true
+            settings.layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
             settings.allowFileAccess = false
             settings.mediaPlaybackRequiresUserGesture = false
             addJavascriptInterface(SessionBridge(server), "Lumir")
@@ -690,60 +690,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        installPullRefreshObserver(view)
-        pullRefreshEnabled = false
         webView = view
         setContentView(view)
         view.loadUrl(server)
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    private fun installPullRefreshObserver(view: WebView) {
-        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
-        val refreshDistance = 72.dp.toFloat()
-        var tracking = false
-        var verticalGesture = false
-        var downX = 0f
-        var downY = 0f
-        var maximumPull = 0f
-
-        view.setOnTouchListener { touchedView, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    tracking = pullRefreshEnabled && !touchedView.canScrollVertically(-1)
-                    verticalGesture = false
-                    downX = event.x
-                    downY = event.y
-                    maximumPull = 0f
-                }
-
-                MotionEvent.ACTION_POINTER_DOWN -> tracking = false
-
-                MotionEvent.ACTION_MOVE -> if (tracking) {
-                    val deltaX = event.x - downX
-                    val deltaY = event.y - downY
-                    if (!verticalGesture && maxOf(abs(deltaX), abs(deltaY)) > touchSlop) {
-                        if (abs(deltaX) >= abs(deltaY)) {
-                            tracking = false
-                        } else {
-                            verticalGesture = true
-                        }
-                    }
-                    if (deltaY < 0 || touchedView.canScrollVertically(-1)) tracking = false
-                    if (tracking && verticalGesture) maximumPull = maxOf(maximumPull, deltaY)
-                }
-
-                MotionEvent.ACTION_UP -> {
-                    val shouldRefresh = tracking && verticalGesture &&
-                        maximumPull >= refreshDistance && pullRefreshEnabled
-                    tracking = false
-                    if (shouldRefresh) view.post { view.reload() }
-                }
-
-                MotionEvent.ACTION_CANCEL -> tracking = false
-            }
-            false
-        }
     }
 
     private fun isTrustedServerUrl(url: String, server: String): Boolean = try {
@@ -818,11 +767,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun setPullRefreshEnabled(enabled: Boolean) {
-            runOnUiThread {
-                pullRefreshEnabled = enabled
-            }
-        }
+        // Retain the bridge for older servers; refresh is now a page button.
+        fun setPullRefreshEnabled(@Suppress("UNUSED_PARAMETER") enabled: Boolean) = Unit
     }
 
     private fun requestDownload(download: PendingDownload) {
@@ -901,7 +847,6 @@ class MainActivity : AppCompatActivity() {
     private fun leaveWebApp() {
         if (leavingWebApp) return
         leavingWebApp = true
-        pullRefreshEnabled = false
         CookieManager.getInstance().removeAllCookies {
             CookieManager.getInstance().flush()
             runOnUiThread { showLogin("已退出登录") }
@@ -941,7 +886,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         executor.shutdownNow()
-        pullRefreshEnabled = false
         webView?.removeJavascriptInterface("Lumir")
         webView?.destroy()
         super.onDestroy()
