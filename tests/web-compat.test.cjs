@@ -4,6 +4,34 @@ const fs = require('node:fs')
 const vm = require('node:vm')
 const script = fs.readFileSync('app/src/main/assets/web-compat.js', 'utf8')
 
+test('feed and gallery cache policy preserves random queries, pagination and caller options', async () => {
+  const { context, calls } = setup()
+  const request = { url: 'https://lumic.test/api/v1/posts?sort=random&seed=one&cursor=two', method: 'GET' }
+  const options = { credentials: 'include', headers: { Accept: 'application/json' }, cache: 'default' }
+  await context.window.fetch(request, options)
+  assert.equal(calls.fetches[0][0], request)
+  assert.equal(calls.fetches[0][1].cache, 'no-store')
+  assert.equal(calls.fetches[0][1].headers, options.headers)
+  assert.equal(calls.fetches[0][1].credentials, 'include')
+  assert.equal(options.cache, 'default')
+  await context.window.fetch('/api/v1/gallery?author=Artist')
+  assert.equal(calls.fetches[1][1].cache, 'no-store')
+  for (const url of ['/flow/original.jpg', '/preview/mobile.jpg', 'https://other.test/api/v1/posts']) {
+    await context.window.fetch(url, options)
+    assert.equal(calls.fetches.at(-1)[1], options)
+  }
+  await context.window.fetch('/api/v1/posts', { method: 'POST', body: '{}' })
+  assert.equal(calls.fetches.at(-1)[1].cache, undefined)
+})
+
+test('native upgrade clears only page cache and revalidates entry without installing touch handlers', () => {
+  const source = fs.readFileSync('app/src/main/java/com/hyaeve/lumir/MainActivity.kt', 'utf8')
+  assert.match(source, /getInt\(WEB_CACHE_VERSION_KEY, 0\) != BuildConfig.VERSION_CODE/)
+  assert.match(source, /clearCache\(true\)/)
+  assert.match(source, /view\.loadUrl\(server, mapOf\("Cache-Control" to "no-cache"/)
+  assert.doesNotMatch(source, /setOnTouchListener|LOAD_CACHE_ONLY|LOAD_CACHE_ELSE_NETWORK/)
+})
+
 function setup(theme = 'dark') {
   const calls = { themes: [], signedOut: 0, links: [], opens: [], fetches: [], observers: [] }
   const root = { dataset: { theme } }

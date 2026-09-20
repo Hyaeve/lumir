@@ -74,6 +74,7 @@ class MainActivity : AppCompatActivity() {
         const val IMAGE_CACHE_STEP_MB = 128
         const val IMAGE_CACHE_LIMIT_KEY = "image.cache.limit.mb"
         const val AVATAR_CACHE_MAX_AGE_MS = 6L * 60L * 60L * 1000L
+        const val WEB_CACHE_VERSION_KEY = "web.cache.version"
         const val LATEST_RELEASE_URL =
             "https://github.com/Hyaeve/lumir/releases/latest"
         const val RELEASE_TAG_PREFIX =
@@ -651,6 +652,13 @@ class MainActivity : AppCompatActivity() {
             cookieManager.flush()
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.cacheMode = WebSettings.LOAD_DEFAULT
+            // Invalidate old page bundles on upgrade, without clearing cookies,
+            // local preferences or the separately managed image cache.
+            if (preferences.getInt(WEB_CACHE_VERSION_KEY, 0) != BuildConfig.VERSION_CODE) {
+                clearCache(true)
+                preferences.edit().putInt(WEB_CACHE_VERSION_KEY, BuildConfig.VERSION_CODE).apply()
+            }
             settings.useWideViewPort = true
             settings.layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL
             isVerticalScrollBarEnabled = false
@@ -706,7 +714,7 @@ class MainActivity : AppCompatActivity() {
         webView = view
         applyWebTheme(preferences.getBoolean("web.dark", false))
         setContentView(view)
-        view.loadUrl(server)
+        view.loadUrl(server, mapOf("Cache-Control" to "no-cache", "Pragma" to "no-cache"))
     }
 
     private fun isTrustedServerUrl(url: String, server: String): Boolean = try {

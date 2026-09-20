@@ -18,6 +18,17 @@
 
   const originalFetch = window.fetch.bind(window);
   window.fetch = async (...args) => {
+    // Preserve seeds, cursors and request options; only fresh feed/gallery
+    // responses bypass HTTP caching. Images retain normal cache behavior.
+    try {
+      const input = args[0];
+      const url = new URL(input && typeof input === 'object' && 'url' in input ? input.url : input, location.href);
+      const method = String(args[1]?.method || input?.method || 'GET').toUpperCase();
+      if (url.origin === location.origin && method === 'GET' &&
+          ['/api/v1/posts', '/api/v1/gallery'].includes(url.pathname)) {
+        args[1] = { ...args[1], cache: 'no-store' };
+      }
+    } catch (_) {}
     const response = await originalFetch(...args);
     try {
       const input = args[0];

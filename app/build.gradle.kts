@@ -29,8 +29,8 @@ android {
         applicationId = "com.hyaeve.lumir"
         minSdk = 23
         targetSdk = 35
-        versionCode = 17
-        versionName = "1.3.3"
+        versionCode = 18
+        versionName = "1.3.4"
     }
 
     splits {
